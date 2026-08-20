@@ -9,12 +9,12 @@
  */
 
 const EdgeTTS = (() => {
-  const BASE_URL = "speech.platform.bing.com/consumer/speech/synthesize/readaloud";
+  const WSS_URL = "wss://api.msedgeservices.com/tts/cognitiveservices/websocket/v1";
+  const VOICES_URL = "https://api.msedgeservices.com/tts/cognitiveservices/voices/list";
   const TRUSTED_CLIENT_TOKEN = "6A5AA1D4EAFF4E9FB37E23D68491D6F4";
   const CHROMIUM_FULL_VERSION = "143.0.3650.75";
   const SEC_MS_GEC_VERSION = `1-${CHROMIUM_FULL_VERSION}`;
   const WIN_EPOCH = 11644473600;
-  const TICKS_PER_SECOND = 10_000_000;
   const MAX_CHUNK_BYTES = 4096;
 
   // --- DRM: Sec-MS-GEC token generation ---
@@ -23,9 +23,9 @@ const EdgeTTS = (() => {
     const nowSec = Math.floor(Date.now() / 1000) + skewSeconds;
     let ticks = nowSec + WIN_EPOCH;
     ticks -= ticks % 300;
-    ticks = Math.round(ticks * (TICKS_PER_SECOND / 100));
+    const windowsTicks = ticks * 10_000_000;
 
-    const strToHash = `${ticks.toFixed(0)}${TRUSTED_CLIENT_TOKEN}`;
+    const strToHash = `${windowsTicks}${TRUSTED_CLIENT_TOKEN}`;
     const encoder = new TextEncoder();
     const data = encoder.encode(strToHash);
     const hashBuffer = await crypto.subtle.digest("SHA-256", data);
@@ -153,20 +153,29 @@ const EdgeTTS = (() => {
   // --- Binary message parsing ---
 
   function parseBinaryMessage(buffer) {
-    const view = new DataView(buffer);
-    if (buffer.byteLength < 2) return null;
+    const uint8Array = new Uint8Array(buffer);
+    const needle = new TextEncoder().encode("Path:audio\r\n");
+    const audioStartIndex = indexOf(uint8Array, needle);
 
-    const headerLen = view.getUint16(0, false);
-    if (buffer.byteLength < 2 + headerLen + 2) return null;
+    if (audioStartIndex !== -1) {
+      const audioChunk = uint8Array.slice(audioStartIndex + needle.length);
+      return { audio: audioChunk };
+    }
+    return null;
+  }
 
-    const headerBytes = new Uint8Array(buffer, 2, headerLen);
-    const headerText = new TextDecoder().decode(headerBytes);
-
-    // Skip the \r\n after headers
-    const audioStart = 2 + headerLen + 2;
-    const audioData = new Uint8Array(buffer, audioStart);
-
-    return { headers: headerText, audio: audioData };
+  function indexOf(arr, subarr) {
+    for (let i = 0; i <= arr.length - subarr.length; i++) {
+      let match = true;
+      for (let j = 0; j < subarr.length; j++) {
+        if (arr[i + j] !== subarr[j]) {
+          match = false;
+          break;
+        }
+      }
+      if (match) return i;
+    }
+    return -1;
   }
 
   // --- Synthesis ---
@@ -196,7 +205,7 @@ const EdgeTTS = (() => {
     const connectionId = generateConnectionId();
     const secMsGec = await generateSecMsGec();
 
-    const url = `wss://${BASE_URL}/edge/v1?TrustedClientToken=${TRUSTED_CLIENT_TOKEN}&ConnectionId=${connectionId}&Sec-MS-GEC=${secMsGec}&Sec-MS-GEC-Version=${SEC_MS_GEC_VERSION}`;
+    const url = `${WSS_URL}?Ocp-Apim-Subscription-Key=${TRUSTED_CLIENT_TOKEN}&Sec-MS-GEC=${secMsGec}&Sec-MS-GEC-Version=${SEC_MS_GEC_VERSION}&ConnectionId=${connectionId}`;
 
     return new Promise((resolve, reject) => {
       const ws = new WebSocket(url);
@@ -242,21 +251,27 @@ const EdgeTTS = (() => {
       };
 
       ws.onmessage = (event) => {
-        if (event.data instanceof ArrayBuffer) {
-          const parsed = parseBinaryMessage(event.data);
-          if (parsed && parsed.audio.byteLength > 0) {
-            audioChunks.push(parsed.audio);
-            totalBytes += parsed.audio.byteLength;
-            if (onProgress) onProgress(totalBytes);
-          }
-        } else {
+        if (typeof event.data === 'string') {
           // Text message
-          const msg = typeof event.data === "string" ? event.data : new TextDecoder().decode(event.data);
+          const msg = event.data;
 
           if (msg.includes("Path:turn.end")) {
             receivedTurnEnd = true;
             ws.close();
           }
+        } else {
+          // Binary message - use FileReader to convert Blob to ArrayBuffer
+          const reader = new FileReader();
+          reader.onload = () => {
+            const arrayBuffer = reader.result;
+            const parsed = parseBinaryMessage(arrayBuffer);
+            if (parsed && parsed.audio.byteLength > 0) {
+              audioChunks.push(parsed.audio);
+              totalBytes += parsed.audio.byteLength;
+              if (onProgress) onProgress(totalBytes);
+            }
+          };
+          reader.readAsArrayBuffer(event.data);
         }
       };
 
@@ -291,7 +306,7 @@ const EdgeTTS = (() => {
    */
   async function fetchVoices() {
     const secMsGec = await generateSecMsGec();
-    const url = `https://${BASE_URL}/voices/list?trustedclienttoken=${TRUSTED_CLIENT_TOKEN}&Sec-MS-GEC=${secMsGec}&Sec-MS-GEC-Version=${SEC_MS_GEC_VERSION}`;
+    const url = `${VOICES_URL}?Ocp-Apim-Subscription-Key=${TRUSTED_CLIENT_TOKEN}&Sec-MS-GEC=${secMsGec}&Sec-MS-GEC-Version=${SEC_MS_GEC_VERSION}`;
 
     const resp = await fetch(url);
     if (!resp.ok) throw new Error(`Failed to fetch voices: ${resp.status}`);

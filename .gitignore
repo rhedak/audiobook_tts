@@ -216,3 +216,9 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Node (for manual E2E tests)
+node_modules/
+
+# Build output
+out/
