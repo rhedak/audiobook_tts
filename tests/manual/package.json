@@ -1,8 +1,9 @@
 {
   "private": true,
-  "description": "Manual E2E tests for audiobook_tts (not part of the Python package)",
+  "description": "Manual E2E tests and dev server for audiobook_tts",
   "scripts": {
-    "test:e2e": "node test_edge_tts_e2e.mjs"
+    "test:e2e": "node test_edge_tts_e2e.mjs",
+    "dev": "node ../../dev-server.mjs"
   },
   "devDependencies": {
     "ws": "^8.18.0"

@@ -9,8 +9,14 @@
  */
 
 const EdgeTTS = (() => {
-  const WSS_URL = "wss://api.msedgeservices.com/tts/cognitiveservices/websocket/v1";
-  const VOICES_URL = "https://api.msedgeservices.com/tts/cognitiveservices/voices/list";
+  // In dev, the Node.js proxy relays /tts-ws to Microsoft's endpoint.
+  // In production (GitHub Pages), direct connection to Microsoft works
+  // because the page is served over HTTPS from a real domain.
+  const isLocal = location.hostname === "localhost" || location.hostname === "127.0.0.1";
+  const wsProto = isLocal ? "ws" : "wss";
+  const WSS_BASE = isLocal
+    ? `${wsProto}://${location.host}/tts-ws`
+    : "wss://api.msedgeservices.com/tts/cognitiveservices/websocket/v1";
   const TRUSTED_CLIENT_TOKEN = "6A5AA1D4EAFF4E9FB37E23D68491D6F4";
   const CHROMIUM_FULL_VERSION = "143.0.3650.75";
   const SEC_MS_GEC_VERSION = `1-${CHROMIUM_FULL_VERSION}`;
@@ -205,7 +211,7 @@ const EdgeTTS = (() => {
     const connectionId = generateConnectionId();
     const secMsGec = await generateSecMsGec();
 
-    const url = `${WSS_URL}?Ocp-Apim-Subscription-Key=${TRUSTED_CLIENT_TOKEN}&Sec-MS-GEC=${secMsGec}&Sec-MS-GEC-Version=${SEC_MS_GEC_VERSION}&ConnectionId=${connectionId}`;
+    const url = `${WSS_BASE}?Ocp-Apim-Subscription-Key=${TRUSTED_CLIENT_TOKEN}&Sec-MS-GEC=${secMsGec}&Sec-MS-GEC-Version=${SEC_MS_GEC_VERSION}&ConnectionId=${connectionId}`;
 
     return new Promise((resolve, reject) => {
       const ws = new WebSocket(url);
@@ -305,12 +311,30 @@ const EdgeTTS = (() => {
    * @returns {Promise<Array>} - Array of voice objects
    */
   async function fetchVoices() {
-    const secMsGec = await generateSecMsGec();
-    const url = `${VOICES_URL}?Ocp-Apim-Subscription-Key=${TRUSTED_CLIENT_TOKEN}&Sec-MS-GEC=${secMsGec}&Sec-MS-GEC-Version=${SEC_MS_GEC_VERSION}`;
-
-    const resp = await fetch(url);
-    if (!resp.ok) throw new Error(`Failed to fetch voices: ${resp.status}`);
-    return resp.json();
+    // Hardcoded voice list — the live endpoint blocks CORS from localhost.
+    // This subset covers the most common English voices.
+    return [
+      { ShortName: "en-US-EmmaMultilingualNeural", FriendlyName: "Emma Multilingual", Locale: "en-US" },
+      { ShortName: "en-US-GuyNeural", FriendlyName: "Guy", Locale: "en-US" },
+      { ShortName: "en-US-JennyNeural", FriendlyName: "Jenny", Locale: "en-US" },
+      { ShortName: "en-US-AriaNeural", FriendlyName: "Aria", Locale: "en-US" },
+      { ShortName: "en-US-DavisNeural", FriendlyName: "Davis", Locale: "en-US" },
+      { ShortName: "en-US-JaneNeural", FriendlyName: "Jane", Locale: "en-US" },
+      { ShortName: "en-US-JasonNeural", FriendlyName: "Jason", Locale: "en-US" },
+      { ShortName: "en-US-SaraNeural", FriendlyName: "Sara", Locale: "en-US" },
+      { ShortName: "en-US-TonyNeural", FriendlyName: "Tony", Locale: "en-US" },
+      { ShortName: "en-US-AvaNeural", FriendlyName: "Ava", Locale: "en-US" },
+      { ShortName: "en-US-AndrewNeural", FriendlyName: "Andrew", Locale: "en-US" },
+      { ShortName: "en-US-BrianNeural", FriendlyName: "Brian", Locale: "en-US" },
+      { ShortName: "en-US-ChristopherNeural", FriendlyName: "Christopher", Locale: "en-US" },
+      { ShortName: "en-US-EricNeural", FriendlyName: "Eric", Locale: "en-US" },
+      { ShortName: "en-US-MichelleNeural", FriendlyName: "Michelle", Locale: "en-US" },
+      { ShortName: "en-US-MonicaNeural", FriendlyName: "Monica", Locale: "en-US" },
+      { ShortName: "en-GB-SoniaNeural", FriendlyName: "Sonia", Locale: "en-GB" },
+      { ShortName: "en-GB-RyanNeural", FriendlyName: "Ryan", Locale: "en-GB" },
+      { ShortName: "en-AU-NatashaNeural", FriendlyName: "Natasha", Locale: "en-AU" },
+      { ShortName: "en-AU-WilliamNeural", FriendlyName: "William", Locale: "en-AU" },
+    ];
   }
 
   // --- Public API ---

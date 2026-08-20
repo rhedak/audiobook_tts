@@ -31,6 +31,6 @@ rsync -a --exclude '__pycache__' --exclude '*.pyc' \
 echo "staged at $stage"
 
 if [ "${1-}" = "--serve" ]; then
-    cd "$stage"
-    python3 -m http.server 8001
+    cd "$root"
+    node dev-server.mjs
 fi

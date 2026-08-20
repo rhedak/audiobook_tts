@@ -1,0 +1,11 @@
+{
+  "private": true,
+  "description": "Dev server and manual tests for audiobook_tts",
+  "scripts": {
+    "dev": "node dev-server.mjs",
+    "test:e2e": "node tests/manual/test_edge_tts_e2e.mjs"
+  },
+  "devDependencies": {
+    "ws": "^8.18.0"
+  }
+}
