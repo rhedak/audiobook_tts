@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Audiobook TTS Builder</title>
+  <meta name="description" content="Build audiobooks from Markdown chapters using Microsoft Neural voices. Runs entirely in your browser.">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="page-header">
+    <h1>Audiobook TTS Builder</h1>
+    <p class="tagline">
+      Upload Markdown chapter files, configure voices and pronunciations,
+      and build multi-chapter audiobooks using Microsoft Neural TTS voices.
+      Runs entirely in your browser: nothing you upload is sent anywhere
+      except Microsoft's speech synthesis endpoint for audio generation.
+    </p>
+    <p class="header-links">
+      <a href="https://www.honeyfeed.fm/novels/32712" target="_blank" rel="noopener">
+        Read the webnovel
+      </a>
+      &middot;
+      <a href="https://rhedak.github.io/anime-character-creator/" target="_blank" rel="noopener">
+        Try the character creator
+      </a>
+      &middot;
+      <a href="https://github.com/rhedak/fantasy-map-generator" target="_blank" rel="noopener">
+        Try the map generator
+      </a>
+      &middot;
+      <a href="https://github.com/rhedak/audiobook_tts" target="_blank" rel="noopener">
+        View the source
+      </a>
+    </p>
+  </header>
+  <main>
+    <p id="status" role="status" aria-live="polite"></p>
+
+    <!-- Section 1: Upload or paste text -->
+    <section id="upload-section">
+      <h2>Add your chapters</h2>
+      <p class="hint">
+        Upload <code>.md</code> chapter files, or paste/write text directly.
+        Each file or pasted block becomes one chapter.
+        Use <code>[[SpeakerName]]</code> on its own line to switch voices (optional).
+      </p>
+
+      <div class="upload-area" id="drop-zone">
+        <p>Drag &amp; drop <code>.md</code> files here</p>
+        <p class="hint">or</p>
+        <label class="file-btn">
+          Choose files
+          <input type="file" id="file-input" accept=".md,.txt,.markdown" multiple hidden>
+        </label>
+      </div>
+
+      <div class="paste-area">
+        <h3>Or paste / write text</h3>
+        <div class="paste-row">
+          <input id="paste-title" type="text" placeholder="Chapter title (e.g. ch01_intro)" value="ch01_the_lighthouse" class="paste-title-input">
+          <button id="add-paste-btn" class="primary-btn">Add chapter</button>
+        </div>
+        <textarea id="paste-text" rows="14">The below is an example for how to use the audiobook maker. Speaker tags with [[]] are optional. Paragraphs without speaker tags are read by the default speaker.
+
+Use --- for scene breaks.
+
+Press "Add Chapter" then "Configure & Build" and then "Build Audiobook" to get your first mp3
+
+---
+
+The old lighthouse stood at the edge of the world, its beam cutting through the fog like a golden sword.
+
+---
+
+[[Kapitaen]]
+We set sail at dawn. The charts say there's nothing beyond the reef, but I've never trusted charts Mira.
+
+[[Mira]]
+And I've never trusted captains who ignore them Kapitaen. What exactly are you expecting to find out there?
+
+[[Kapitaen]]
+Something no map has drawn yet. That's the only thing worth sailing for.</textarea>
+      </div>
+
+      <div id="chapter-list" class="chapter-list" style="display:none">
+        <h3>Chapters</h3>
+        <ul id="chapter-items"></ul>
+      </div>
+
+      <div class="upload-actions" id="upload-actions" style="display:none">
+        <button id="to-config-btn" class="primary-btn">Configure &amp; Build &rarr;</button>
+      </div>
+    </section>
+
+    <!-- Section 2: Configuration and build -->
+    <section id="editor-section" style="display:none">
+      <div class="preview-pane">
+        <h3>Preview</h3>
+        <select id="preview-chapter-select"></select>
+        <div id="preview-content" class="preview-content"></div>
+      </div>
+      <div class="controls-pane">
+        <fieldset>
+          <legend>Voice</legend>
+          <div class="control-group">
+            <label for="voice-select">Narrator voice</label>
+            <select id="voice-select">
+              <option value="">Loading voices...</option>
+            </select>
+          </div>
+          <div id="multi-voice-toggle" class="control-group">
+            <label>
+              <input type="checkbox" id="multi-voice-check" checked>
+              Multi-voice mode (use [[Speaker]] tags)
+            </label>
+          </div>
+        </fieldset>
+
+        <fieldset id="speaker-fieldset">
+          <legend>Speaker Voices</legend>
+          <div id="speaker-voice-list"></div>
+          <button id="add-speaker-btn" class="link-button">+ Add speaker</button>
+        </fieldset>
+
+        <fieldset>
+          <legend>Pronunciations</legend>
+          <p class="hint">Map words to phonetic spellings the TTS engine will read correctly.</p>
+          <div id="pronunciation-list"></div>
+          <button id="add-pronunciation-btn" class="link-button">+ Add pronunciation</button>
+        </fieldset>
+
+        <fieldset>
+          <legend>Build</legend>
+          <div id="build-progress" style="display:none">
+            <div class="progress-bar">
+              <div class="progress-fill" id="progress-fill"></div>
+            </div>
+            <p class="progress-text" id="progress-text">0 / 0 paragraphs</p>
+          </div>
+          <div class="row-btns">
+            <button id="build-btn" class="primary-btn">Build audiobook</button>
+            <button id="download-all-btn" class="link-button" disabled>Download all (zip)</button>
+          </div>
+          <div id="chapter-status"></div>
+        </fieldset>
+
+        <p class="back-link">
+          <button id="back-to-upload" class="link-button">&larr; add more chapters</button>
+        </p>
+      </div>
+    </section>
+  </main>
+  <footer class="licensing">
+    <h2>What you can do with what you make here</h2>
+    <p>
+      The code that builds these audiobooks is open source under the MIT licence,
+      and any audio you export is yours. Use it wherever you like, including
+      commercially. No permission needed, no fee, no need to ask.
+    </p>
+    <p>One thing asked rather than required.</p>
+    <p>Please link back, to this page or to the code, wherever an audiobook ends up.</p>
+    <p>Neither is a legal condition. There is nothing here anyone intends to enforce.</p>
+
+    <h2>Have feedback? Found a voice that needs another pronunciation?</h2>
+    <p>
+      Email <a href="mailto:rhedak@proton.me">rhedak@proton.me</a>, or reach
+      the author on
+      <a href="https://discord.com/users/@rhedak" target="_blank" rel="noopener">Discord</a>,
+      <a href="https://t.me/rhedak" target="_blank" rel="noopener">Telegram</a>
+      or <a href="https://x.com/rhedak1" target="_blank" rel="noopener">X</a>.
+    </p>
+  </footer>
+  <script src="https://cdn.jsdelivr.net/pyodide/v0.26.4/full/pyodide.js"></script>
+  <script src="edge-tts.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
