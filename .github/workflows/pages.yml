@@ -26,6 +26,11 @@ jobs:
 
       - run: uv sync
 
+      # MP3 export shells out to ffmpeg via pydub; runner images no longer
+      # ship it by default.
+      - name: Install ffmpeg
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+
       - name: Run the test suite
         run: uv run pytest -q
 

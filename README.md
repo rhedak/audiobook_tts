@@ -57,6 +57,9 @@ Config (voice choices + pronunciations) can be saved to / loaded from JSON.
 
 ## Development
 
+Requires `ffmpeg` on your PATH (MP3 export shells out to it; on macOS
+`brew install ffmpeg`).
+
 ```sh
 uv sync                          # library deps
 shell_scripts/local-serve.sh     # stage web UI + start dev proxy (:8001)
