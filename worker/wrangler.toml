@@ -2,7 +2,9 @@ name = "audiobook-tts-relay"
 main = "worker.js"
 compatibility_date = "2026-01-01"
 
-# Optional abuse guard: comma-separated list of origins allowed to use this
-# relay, e.g. ["https://henrik.github.io"]. Leave empty to allow any page.
+# Abuse guard: comma-separated list of origins allowed to use this relay.
+# Browsers always send Origin on WebSocket upgrades, so this stops other
+# sites from embedding the relay and burning its quota. It cannot stop
+# someone deliberately forging headers outside a browser -- see README.
 [vars]
-ALLOWED_ORIGINS = ""
+ALLOWED_ORIGINS = "https://rhedak.github.io"
