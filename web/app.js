@@ -218,11 +218,18 @@ function renderChapterList() {
 // --- File upload ---
 
 function handleFiles(files) {
+  const skipped = [];
   for (const file of files) {
-    if (!file.name.match(/\.(md|txt|markdown)$/i)) continue;
     const reader = new FileReader();
     reader.onload = () => {
-      const name = file.name.replace(/\.(md|txt|markdown)$/i, "");
+      // Any text file is fair game; null bytes are the classic tell of a
+      // binary that would only confuse the parser.
+      if (typeof reader.result !== "string" || reader.result.includes("\u0000")) {
+        skipped.push(file.name);
+        showStatus(`Skipped (not a text file): ${skipped.join(", ")}`, true);
+        return;
+      }
+      const name = file.name.replace(/\.[^.]+$/, "") || file.name;
       addChapter(name, reader.result);
     };
     reader.readAsText(file);

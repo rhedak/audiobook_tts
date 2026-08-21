@@ -46,7 +46,8 @@ relay never sees your text unless you point the page at it.
 
 ## Building an audiobook
 
-1. Add Markdown chapter files (one file per chapter, `# Heading` = title).
+1. Add text chapter files (`.md`, `.txt`, anything readable; one file per
+   chapter, `# Heading` = title).
 2. Pick a voice, or enable multi-voice and assign voices per speaker
    (dialogue lines like `"Hello," said X` are attributed automatically).
 3. Add pronunciations for names the engine mangles (e.g. `Kapitaen` ->
