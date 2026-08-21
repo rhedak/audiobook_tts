@@ -30,7 +30,7 @@ jobs:
         run: uv run pytest -q
 
       - name: Assemble the site
-        run: ./web-stage.sh
+        run: shell_scripts/web-stage.sh
 
       - uses: actions/upload-pages-artifact@v3
         with:

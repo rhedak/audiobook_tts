@@ -115,8 +115,8 @@ def bridge_default_pronunciations():
     Users can modify this in the UI.
     """
     defaults = {
-        "Kapitaen": "kah-pih-TAYN",
-        "Mira": "MEE-rah",
+        "Kapitaen": "kah-pee-tehn",
+        "Mira": "mee-rah",
     }
     return json.dumps(defaults)
 

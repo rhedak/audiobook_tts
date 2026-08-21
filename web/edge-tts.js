@@ -1,27 +1,100 @@
 /**
  * edge-tts.js — Reimplementation of the Microsoft Edge TTS WebSocket protocol.
  *
- * Connects directly to Microsoft's speech synthesis service, same as the
- * Python edge-tts library. Produces raw MP3 audio chunks that can be
- * concatenated into a complete file.
+ * Speaks Microsoft's speech synthesis protocol, same as the Python edge-tts
+ * library, through a relay that spoofs the Edge extension origin (dev proxy,
+ * user-run local relay, or hosted Worker). Produces raw MP3 audio chunks
+ * that can be concatenated into a complete file.
  *
  * No dependencies. Uses the browser's native WebSocket and Web Crypto API.
  */
 
 const EdgeTTS = (() => {
-  // In dev, the Node.js proxy relays /tts-ws to Microsoft's endpoint.
-  // In production (GitHub Pages), direct connection to Microsoft works
-  // because the page is served over HTTPS from a real domain.
-  const isLocal = location.hostname === "localhost" || location.hostname === "127.0.0.1";
-  const wsProto = isLocal ? "ws" : "wss";
-  const WSS_BASE = isLocal
-    ? `${wsProto}://${location.host}/tts-ws`
-    : "wss://api.msedgeservices.com/tts/cognitiveservices/websocket/v1";
+  // Where to send speech requests. Microsoft's endpoint rejects browser
+  // handshakes from any non-extension origin, so the page always needs a
+  // relay in the middle. Resolution order:
+  //   1. Page served from localhost -> dev proxy (/tts-ws on same host).
+  //   2. Custom relay URL saved by the user (localStorage, set in Config).
+  //   3. The hosted relay Worker (see worker/ and README).
+  //
+  // Resolved per connection, not at load: the user may set or change the
+  // relay while the page is open.
+  const HOSTED_RELAY_URL = "wss://audiobook-tts-relay.rhedak.workers.dev/tts-ws";
+  function currentRelayUrl() {
+    if (location.hostname === "localhost" || location.hostname === "127.0.0.1") {
+      return `ws://${location.host}/tts-ws`;
+    }
+    return localStorage.getItem("tts-relay-url") || HOSTED_RELAY_URL;
+  }
   const TRUSTED_CLIENT_TOKEN = "6A5AA1D4EAFF4E9FB37E23D68491D6F4";
   const CHROMIUM_FULL_VERSION = "143.0.3650.75";
   const SEC_MS_GEC_VERSION = `1-${CHROMIUM_FULL_VERSION}`;
   const WIN_EPOCH = 11644473600;
   const MAX_CHUNK_BYTES = 4096;
+
+  // --- Onset-clip fix ---
+
+  // Azure Neural voices reliably clip the first syllable of whatever they
+  // are asked to speak at the very start of a fresh synthesis connection.
+  // The Python package (synthesis.py) works around the same bug by
+  // prepending a disposable lead-in word and cutting its audio away using
+  // WordBoundary metadata; this is a port of that fix. The filler ends in
+  // a voiceless stop ('t') on purpose: its closure cuts cleanly, while a
+  // vowel would keep ringing past the reported boundary.
+  const FILLER_LEAD_IN = "Test.";
+  const FILLER_WORD_COUNT = FILLER_LEAD_IN.split(" ").length;
+  const ONSET_LEAD_PAD_MS = 30;
+
+  // --- MP3 frame walking (for the onset cut) ---
+
+  // Azure streams CBR Layer III, but walk whatever is there generically:
+  // find each frame header, accumulate per-frame duration, and drop the
+  // leading frames that end before the cut point.
+  const MP3_BITRATES_V1 = [0, 32, 64, 96, 128, 160, 192, 224, 256, 288, 320, 352, 384, 416, 448];
+  const MP3_BITRATES_V2 = [0, 8, 16, 24, 32, 40, 48, 56, 64, 80, 96, 112, 128, 144, 160];
+  const MP3_SAMPLE_RATES_BY_VERSION = {
+    3: [44100, 48000, 32000], // MPEG 1
+    2: [22050, 24000, 16000], // MPEG 2
+    0: [11025, 12000, 8000],  // MPEG 2.5
+  };
+
+  function mp3FrameInfo(bytes, i) {
+    if (bytes[i] !== 0xff || (bytes[i + 1] & 0xe0) !== 0xe0) return null;
+    const versionBits = (bytes[i + 1] >> 3) & 0x03;
+    const layerBits = (bytes[i + 1] >> 1) & 0x03;
+    if (versionBits === 1 || layerBits !== 1) return null;
+    const bitrateIdx = (bytes[i + 2] >> 4) & 0x0f;
+    const sampleRateIdx = (bytes[i + 2] >> 2) & 0x03;
+    if (bitrateIdx === 0 || bitrateIdx === 15 || sampleRateIdx === 3) return null;
+    const bitrate = (versionBits === 3 ? MP3_BITRATES_V1 : MP3_BITRATES_V2)[bitrateIdx] * 1000;
+    const sampleRate = MP3_SAMPLE_RATES_BY_VERSION[versionBits][sampleRateIdx];
+    const samplesPerFrame = versionBits === 3 ? 1152 : 576;
+    const padding = (bytes[i + 2] >> 1) & 0x01;
+    return {
+      frameLen: Math.floor((samplesPerFrame / 8) * bitrate / sampleRate) + padding,
+      durationMs: (samplesPerFrame / sampleRate) * 1000,
+    };
+  }
+
+  function trimMp3Start(bytes, cutMs) {
+    let offset = 0;
+    let playedMs = 0;
+    let firstFrame = true;
+    while (offset < bytes.length) {
+      const info = mp3FrameInfo(bytes, offset);
+      if (!info) {
+        // Unknown stream layout: keep the bytes untouched rather than
+        // risk corrupting audio we do not understand.
+        if (firstFrame) return bytes;
+        break;
+      }
+      firstFrame = false;
+      if (playedMs + info.durationMs > cutMs) break;
+      playedMs += info.durationMs;
+      offset += info.frameLen;
+    }
+    return offset > 0 ? bytes.slice(offset) : bytes;
+  }
 
   // --- DRM: Sec-MS-GEC token generation ---
 
@@ -189,6 +262,10 @@ const EdgeTTS = (() => {
   /**
    * Synthesize text to MP3 audio.
    *
+   * Each text chunk is synthesized on its own connection with the
+   * onset-clip fix applied (filler lead-in + WordBoundary cut), since the
+   * clip happens at the start of every fresh connection.
+   *
    * @param {string} text - The text to synthesize
    * @param {object} opts
    * @param {string} opts.voice - Voice short name (e.g. "en-US-JennyNeural")
@@ -199,6 +276,15 @@ const EdgeTTS = (() => {
    * @returns {Promise<Blob>} - The synthesized MP3 audio
    */
   async function synthesize(text, opts = {}) {
+    const chunks = splitText(text, MAX_CHUNK_BYTES);
+    const parts = [];
+    for (const chunk of chunks) {
+      parts.push(await synthesizeOnConnection(`${FILLER_LEAD_IN} ${chunk}`, opts));
+    }
+    return new Blob(parts, { type: "audio/mpeg" });
+  }
+
+  function synthesizeOnConnection(text, opts) {
     const {
       voice = "en-US-EmmaMultilingualNeural",
       rate = "+0%",
@@ -207,100 +293,134 @@ const EdgeTTS = (() => {
       onProgress = null,
     } = opts;
 
-    const muid = generateMuid();
     const connectionId = generateConnectionId();
-    const secMsGec = await generateSecMsGec();
+    const secMsGecPromise = generateSecMsGec();
 
-    const url = `${WSS_BASE}?Ocp-Apim-Subscription-Key=${TRUSTED_CLIENT_TOKEN}&Sec-MS-GEC=${secMsGec}&Sec-MS-GEC-Version=${SEC_MS_GEC_VERSION}&ConnectionId=${connectionId}`;
+    return (async () => {
+      const secMsGec = await secMsGecPromise;
+      const url = `${currentRelayUrl()}?Ocp-Apim-Subscription-Key=${TRUSTED_CLIENT_TOKEN}&Sec-MS-GEC=${secMsGec}&Sec-MS-GEC-Version=${SEC_MS_GEC_VERSION}&ConnectionId=${connectionId}`;
 
-    return new Promise((resolve, reject) => {
-      const ws = new WebSocket(url);
-      let audioChunks = [];
-      let totalBytes = 0;
-      let receivedTurnEnd = false;
+      return new Promise((resolve, reject) => {
+        const ws = new WebSocket(url);
+        let audioChunks = [];
+        let totalBytes = 0;
+        let receivedTurnEnd = false;
+        let wordBoundariesSeen = 0;
+        let realOnsetMs = null;
 
-      ws.binaryType = "arraybuffer";
+        ws.binaryType = "arraybuffer";
 
-      ws.onopen = async () => {
-        // Set headers that mimic the Edge extension
-        // (WebSocket API doesn't let us set custom headers, but the token in the URL is sufficient)
+        ws.onopen = async () => {
+          // Set headers that mimic the Edge extension
+          // (WebSocket API doesn't let us set custom headers, but the token in the URL is sufficient)
 
-        // Send speech.config
-        const configMsg = [
-          `X-Timestamp:${dateToString()}`,
-          "Content-Type:application/json; charset=utf-8",
-          "Path:speech.config",
-          "",
-          "",
-        ].join("\r\n") + '{"context":{"synthesis":{"audio":{"metadataoptions":{"sentenceBoundaryEnabled":"false","wordBoundaryEnabled":"false"},"outputFormat":"audio-24khz-48kbitrate-mono-mp3"}}}}';
-
-        ws.send(configMsg);
-
-        // Split text and send each chunk
-        const chunks = splitText(text, MAX_CHUNK_BYTES);
-
-        for (const chunk of chunks) {
-          const requestId = generateRequestId();
-          const ssml = buildSSML(chunk, voice, rate, pitch, volume);
-
-          const ssmlMsg = [
-            `X-RequestId:${requestId}`,
-            "Content-Type:application/ssml+xml",
-            `X-Timestamp:${dateToString()}Z`,
-            "Path:ssml",
+          // Send speech.config. Word boundaries are requested so the
+          // filler lead-in's audio can be located and cut away.
+          const configMsg = [
+            `X-Timestamp:${dateToString()}`,
+            "Content-Type:application/json; charset=utf-8",
+            "Path:speech.config",
             "",
             "",
-          ].join("\r\n") + ssml;
+          ].join("\r\n") + '{"context":{"synthesis":{"audio":{"metadataoptions":{"sentenceBoundaryEnabled":"false","wordBoundaryEnabled":"true"},"outputFormat":"audio-24khz-48kbitrate-mono-mp3"}}}}';
 
-          ws.send(ssmlMsg);
-        }
-      };
+          ws.send(configMsg);
 
-      ws.onmessage = (event) => {
-        if (typeof event.data === 'string') {
-          // Text message
-          const msg = event.data;
+          // Split text and send each chunk
+          const chunks = splitText(text, MAX_CHUNK_BYTES);
 
-          if (msg.includes("Path:turn.end")) {
-            receivedTurnEnd = true;
-            ws.close();
+          for (const chunk of chunks) {
+            const requestId = generateRequestId();
+            const ssml = buildSSML(chunk, voice, rate, pitch, volume);
+
+            const ssmlMsg = [
+              `X-RequestId:${requestId}`,
+              "Content-Type:application/ssml+xml",
+              `X-Timestamp:${dateToString()}Z`,
+              "Path:ssml",
+              "",
+              "",
+            ].join("\r\n") + ssml;
+
+            ws.send(ssmlMsg);
           }
-        } else {
-          // Binary message - use FileReader to convert Blob to ArrayBuffer
-          const reader = new FileReader();
-          reader.onload = () => {
-            const arrayBuffer = reader.result;
-            const parsed = parseBinaryMessage(arrayBuffer);
-            if (parsed && parsed.audio.byteLength > 0) {
-              audioChunks.push(parsed.audio);
-              totalBytes += parsed.audio.byteLength;
-              if (onProgress) onProgress(totalBytes);
+        };
+
+        ws.onmessage = (event) => {
+          if (typeof event.data === 'string') {
+            const msg = event.data;
+
+            if (msg.includes("Path:audio.metadata")) {
+              // WordBoundary offsets are in 100-ns ticks; /10,000 -> ms.
+              // The boundary right after the filler's words marks where
+              // the real text begins.
+              try {
+                const data = JSON.parse(msg.slice(msg.indexOf("{")));
+                for (const entry of data.Metadata || []) {
+                  if (entry.Type === "WordBoundary") {
+                    wordBoundariesSeen++;
+                    if (wordBoundariesSeen === FILLER_WORD_COUNT + 1) {
+                      realOnsetMs = (entry.Data || entry).Offset / 10_000;
+                    }
+                  }
+                }
+              } catch {
+                // Metadata is optional; without it we just skip the cut.
+              }
+            } else if (msg.includes("Path:turn.end")) {
+              receivedTurnEnd = true;
+              ws.close();
             }
-          };
-          reader.readAsArrayBuffer(event.data);
-        }
-      };
+          } else {
+            // Binary message. With binaryType "arraybuffer" event.data is
+            // already an ArrayBuffer; only Blob payloads need FileReader.
+            if (event.data instanceof ArrayBuffer) {
+              consumeAudio(event.data);
+            } else {
+              const reader = new FileReader();
+              reader.onload = () => consumeAudio(reader.result);
+              reader.readAsArrayBuffer(event.data);
+            }
+          }
+        };
 
-      ws.onerror = (err) => {
-        reject(new Error(`WebSocket error: ${err.message || "unknown"}`));
-      };
+        function consumeAudio(arrayBuffer) {
+          const parsed = parseBinaryMessage(arrayBuffer);
+          if (parsed && parsed.audio.byteLength > 0) {
+            audioChunks.push(parsed.audio);
+            totalBytes += parsed.audio.byteLength;
+            if (onProgress) onProgress(totalBytes);
+          }
+        }
 
-      ws.onclose = () => {
-        if (audioChunks.length === 0 && !receivedTurnEnd) {
-          reject(new Error("Connection closed before receiving audio"));
-          return;
-        }
-        // Concatenate all MP3 chunks
-        const totalLength = audioChunks.reduce((sum, chunk) => sum + chunk.byteLength, 0);
-        const result = new Uint8Array(totalLength);
-        let offset = 0;
-        for (const chunk of audioChunks) {
-          result.set(new Uint8Array(chunk), offset);
-          offset += chunk.byteLength;
-        }
-        resolve(new Blob([result], { type: "audio/mpeg" }));
-      };
-    });
+        ws.onerror = (err) => {
+          reject(new Error(`WebSocket error: ${err.message || "unknown"}`));
+        };
+
+        ws.onclose = () => {
+          if (audioChunks.length === 0 && !receivedTurnEnd) {
+            reject(new Error("Connection closed before receiving audio"));
+            return;
+          }
+          // Concatenate all MP3 chunks
+          const totalLength = audioChunks.reduce((sum, chunk) => sum + chunk.byteLength, 0);
+          let result = new Uint8Array(totalLength);
+          let offset = 0;
+          for (const chunk of audioChunks) {
+            result.set(new Uint8Array(chunk), offset);
+            offset += chunk.byteLength;
+          }
+          // Cut the filler lead-in away, anchoring on the real text's
+          // first-word onset (minus a small pad so the word itself is not
+          // clipped). Falls back to untrimmed audio when no boundary was
+          // reported.
+          if (realOnsetMs !== null) {
+            result = trimMp3Start(result, Math.max(0, realOnsetMs - ONSET_LEAD_PAD_MS));
+          }
+          resolve(new Blob([result], { type: "audio/mpeg" }));
+        };
+      });
+    })();
   }
 
   // --- Voice list ---

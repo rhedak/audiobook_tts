@@ -81,7 +81,13 @@ def strip_redundant_speaker_prefix(text: str, speaker: str) -> str:
     - A trailing "Name, descriptor." attribution
     - A mid-sentence "Name, descriptor." attribution between two quoted
       fragments
+
+    An empty *speaker* disables stripping entirely: every pattern would
+    otherwise degenerate (e.g. the trailing-attribution rule would eat any
+    ", ... ." clause off the end of the text).
     """
+    if not speaker:
+        return text
     text = re.sub(
         rf"(^|\n)\s*{re.escape(speaker)}('s [^,:\n]*)?(,[^:\n]*)?:\s*", r"\1", text
     )

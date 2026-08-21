@@ -99,3 +99,20 @@ def test_strip_prefix_colon():
 def test_strip_prefix_trailing_name():
     result = strip_redundant_speaker_prefix('"Why?" Nadeshiko.', "Nadeshiko")
     assert result == '"Why?"'
+
+
+def test_empty_speaker_strips_nothing():
+    # The web UI passes default_speaker=""; with an empty name every
+    # stripping pattern degenerates and eats ordinary prose (e.g. any
+    # trailing ", ... ." clause read as a "Name, descriptor." attribution).
+    text = (
+        "The old lighthouse stood at the edge of the world, "
+        "its beam cutting through the fog like a golden sword."
+    )
+    assert strip_redundant_speaker_prefix(text, "") == text
+
+
+def test_empty_default_speaker_keeps_trailing_comma_clause():
+    content = "The lighthouse stood at the edge of the world, its beam cutting through the fog."
+    segments = split_speaker_segments(content, default_speaker="")
+    assert segments == [("", content)]

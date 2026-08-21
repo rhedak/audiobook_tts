@@ -23,6 +23,12 @@ dev = [
     "pytest-asyncio>=1.4.0",
 ]
 
+# Browser E2E test only (tests/e2e/web_e2e.py); not installed by plain
+# `uv sync`. Install with: uv sync --group e2e
+e2e = [
+    "playwright>=1.40",
+]
+
 [tool.pytest.ini_options]
 pythonpath = ["src"]
 testpaths = ["tests"]

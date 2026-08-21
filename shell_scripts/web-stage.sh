@@ -10,11 +10,11 @@
 # into one flat directory, which is what both a local test server and the
 # GitHub Actions deploy (.github/workflows/pages.yml) serve from.
 #
-#   ./web-stage.sh            stage into out/web-stage/
-#   ./web-stage.sh --serve    stage, then serve it on http://localhost:8001
+#   shell_scripts/web-stage.sh            stage into out/web-stage/
+#   shell_scripts/web-stage.sh --serve    stage, then serve it on http://localhost:8001
 set -euo pipefail
 
-root="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 stage="$root/out/web-stage"
 
 rm -rf "$stage"

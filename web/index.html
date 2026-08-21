@@ -13,8 +13,11 @@
     <p class="tagline">
       Upload Markdown chapter files, configure voices and pronunciations,
       and build multi-chapter audiobooks using Microsoft Neural TTS voices.
-      Runs entirely in your browser: nothing you upload is sent anywhere
-      except Microsoft's speech synthesis endpoint for audio generation.
+      Everything runs in your browser. Microsoft rejects speech requests
+      from web pages, so requests are forwarded through a relay: by default
+      a small hosted one (your chapter text passes through it on the way to
+      Microsoft), or your own local relay if you prefer your text to stay
+      on your machine &mdash; see <em>Speech relay</em> below.
     </p>
     <p class="header-links">
       <a href="https://www.honeyfeed.fm/novels/32712" target="_blank" rel="noopener">
@@ -128,6 +131,34 @@ Something no map has drawn yet. That's the only thing worth sailing for.</textar
           <p class="hint">Map words to phonetic spellings the TTS engine will read correctly.</p>
           <div id="pronunciation-list"></div>
           <button id="add-pronunciation-btn" class="link-button">+ Add pronunciation</button>
+        </fieldset>
+
+        <fieldset>
+          <legend>Config</legend>
+          <p class="hint">Save your voice settings and pronunciations to a file, and load them again later.</p>
+          <div class="row-btns">
+            <button id="export-config-btn" class="link-button">Save config (json)</button>
+            <button id="import-config-btn" class="link-button">Load config</button>
+            <input type="file" id="config-file-input" accept=".json,application/json" hidden>
+          </div>
+        </fieldset>
+
+        <fieldset>
+          <legend>Speech relay</legend>
+          <p class="hint">
+            Microsoft rejects speech requests from web pages, so they must be
+            forwarded through a small relay. By default this page uses a
+            hosted relay: your chapter text passes through the author's
+            server on its way to Microsoft. If you prefer your text to stay
+            on your machine, run your own relay and point this setting at it.
+          </p>
+          <div class="row-btns">
+            <input type="text" id="relay-url-input" class="text-input"
+                   placeholder="ws://localhost:8765/tts-ws" spellcheck="false">
+            <button id="relay-save-btn" class="link-button">Use my relay</button>
+            <button id="relay-clear-btn" class="link-button">Use hosted</button>
+          </div>
+          <p class="hint" id="relay-status"></p>
         </fieldset>
 
         <fieldset>

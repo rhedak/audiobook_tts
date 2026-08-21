@@ -7,7 +7,7 @@
  * (no ws library for the proxy path — just pipe bytes after upgrade).
  *
  * Usage:
- *   ./web-stage.sh --serve    stage + start dev server
+ *   shell_scripts/web-stage.sh --serve    stage + start dev server
  *   npm run dev               same thing
  *   Then open http://localhost:8001
  */
@@ -65,10 +65,18 @@ async function serveStatic(req, res) {
 
 // --- Raw TCP WebSocket proxy ---
 
-function proxyWebSocket(clientSocket, requestUrl, head) {
+function proxyWebSocket(clientSocket, requestUrl, clientWsKey, head) {
   const clientUrl = new URL(requestUrl, "http://localhost");
   const ttsQuery = clientUrl.search;
   const wsKey = crypto.randomBytes(16).toString("base64");
+
+  // RFC 6455: the client validates Sec-WebSocket-Accept against the key IT
+  // sent, so the 101 we forward must be derived from the client's key (not
+  // the one we send upstream to Microsoft).
+  const clientAccept = crypto
+    .createHash("sha1")
+    .update(clientWsKey + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11")
+    .digest("base64");
 
   let serverHeadersDone = false;
   let clientBuf = head && head.length > 0 ? Buffer.from(head) : Buffer.alloc(0);
@@ -115,7 +123,9 @@ function proxyWebSocket(clientSocket, requestUrl, head) {
           clientSocket.write(
             "HTTP/1.1 101 Switching Protocols\r\n" +
             "Upgrade: websocket\r\n" +
-            "Connection: Upgrade\r\n\r\n"
+            "Connection: Upgrade\r\n" +
+            `Sec-WebSocket-Accept: ${clientAccept}\r\n` +
+            "\r\n"
           );
         }
 
@@ -173,7 +183,7 @@ const server = createServer(serveStatic);
 server.on("upgrade", (req, socket, head) => {
   if (req.url.startsWith("/tts-ws")) {
     console.log(`  Proxy: client upgrade for ${req.url.slice(0, 80)}...`);
-    proxyWebSocket(socket, req.url, head);
+    proxyWebSocket(socket, req.url, req.headers["sec-websocket-key"], head);
   } else {
     socket.destroy();
   }

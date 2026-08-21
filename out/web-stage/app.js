@@ -54,6 +54,9 @@ const pronunciationList = document.getElementById("pronunciation-list");
 const addPronunciationBtn = document.getElementById("add-pronunciation-btn");
 const buildBtn = document.getElementById("build-btn");
 const downloadAllBtn = document.getElementById("download-all-btn");
+const exportConfigBtn = document.getElementById("export-config-btn");
+const importConfigBtn = document.getElementById("import-config-btn");
+const configFileInput = document.getElementById("config-file-input");
 const buildProgress = document.getElementById("build-progress");
 const progressFill = document.getElementById("progress-fill");
 const progressText = document.getElementById("progress-text");
@@ -416,6 +419,150 @@ voiceSelect.addEventListener("change", () => {
   state.selectedVoice = voiceSelect.value;
 });
 
+// --- Config export / import ---
+
+const CONFIG_VERSION = 1;
+
+function isStringMap(value) {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    !Array.isArray(value) &&
+    Object.values(value).every((v) => typeof v === "string")
+  );
+}
+
+exportConfigBtn.addEventListener("click", () => {
+  const config = {
+    version: CONFIG_VERSION,
+    selectedVoice: state.selectedVoice,
+    multiVoice: state.multiVoice,
+    speakerVoices: state.speakerVoices,
+    pronunciations: state.pronunciations,
+  };
+  const blob = new Blob([JSON.stringify(config, null, 2)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = "audiobook-tts-config.json";
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 60000);
+});
+
+importConfigBtn.addEventListener("click", () => configFileInput.click());
+
+configFileInput.addEventListener("change", async () => {
+  const file = configFileInput.files[0];
+  configFileInput.value = ""; // allow re-loading the same file
+  if (!file) return;
+  try {
+    applyConfig(JSON.parse(await file.text()));
+    showStatus(`Config loaded from ${file.name}.`);
+  } catch (err) {
+    showStatus(`Could not load config: ${err.message}`, true);
+  }
+});
+
+// --- Speech relay ---
+
+const relayUrlInput = document.getElementById("relay-url-input");
+const relaySaveBtn = document.getElementById("relay-save-btn");
+const relayClearBtn = document.getElementById("relay-clear-btn");
+const relayStatus = document.getElementById("relay-status");
+
+function describeRelay() {
+  const custom = localStorage.getItem("tts-relay-url");
+  if (custom) {
+    relayUrlInput.value = custom;
+    relayStatus.textContent = "Using your relay. Check it is running before building.";
+  } else {
+    relayStatus.textContent = "Using the hosted relay.";
+  }
+}
+
+function checkRelayHealth(url) {
+  // ws(s)://host:port/tts-ws -> http(s)://host:port/health
+  try {
+    const u = new URL(url);
+    const health = `${u.protocol === "wss:" ? "https" : "http"}://${u.host}/health`;
+    fetch(health, { mode: "cors" })
+      .then((r) => {
+        if (r.ok) {
+          relayStatus.textContent = "Relay reachable.";
+        } else {
+          relayStatus.textContent = `Relay answered with HTTP ${r.status}.`;
+        }
+      })
+      .catch(() => {
+        relayStatus.textContent = "Could not reach the relay. Is it running?";
+      });
+  } catch {
+    relayStatus.textContent = "That does not look like a WebSocket URL.";
+  }
+}
+
+relaySaveBtn.addEventListener("click", () => {
+  const url = relayUrlInput.value.trim();
+  if (!url) {
+    relayStatus.textContent = "Enter a relay URL first, e.g. ws://localhost:8765/tts-ws";
+    return;
+  }
+  localStorage.setItem("tts-relay-url", url);
+  describeRelay();
+  checkRelayHealth(url);
+});
+
+relayClearBtn.addEventListener("click", () => {
+  localStorage.removeItem("tts-relay-url");
+  relayUrlInput.value = "";
+  describeRelay();
+});
+
+describeRelay();
+
+function applyConfig(config) {
+  if (typeof config !== "object" || config === null || Array.isArray(config)) {
+    throw new Error("expected a JSON object");
+  }
+  if (config.selectedVoice !== undefined) {
+    if (typeof config.selectedVoice !== "string" || !config.selectedVoice) {
+      throw new Error("selectedVoice must be a non-empty string");
+    }
+    state.selectedVoice = config.selectedVoice;
+    voiceSelect.value = config.selectedVoice;
+    if (voiceSelect.value !== config.selectedVoice) {
+      // Voice list not loaded (or voice unknown): keep the UI honest.
+      const opt = document.createElement("option");
+      opt.value = config.selectedVoice;
+      opt.textContent = `${config.selectedVoice} (from config)`;
+      voiceSelect.appendChild(opt);
+      voiceSelect.value = config.selectedVoice;
+    }
+  }
+  if (config.multiVoice !== undefined) {
+    if (typeof config.multiVoice !== "boolean") {
+      throw new Error("multiVoice must be true or false");
+    }
+    state.multiVoice = config.multiVoice;
+    multiVoiceCheck.checked = config.multiVoice;
+    speakerFieldset.style.display = config.multiVoice ? "" : "none";
+  }
+  if (config.speakerVoices !== undefined) {
+    if (!isStringMap(config.speakerVoices)) {
+      throw new Error("speakerVoices must map names to voice names");
+    }
+    state.speakerVoices = config.speakerVoices;
+    renderSpeakerVoices();
+  }
+  if (config.pronunciations !== undefined) {
+    if (!isStringMap(config.pronunciations)) {
+      throw new Error("pronunciations must map words to phonetic spellings");
+    }
+    state.pronunciations = config.pronunciations;
+    renderPronunciations();
+  }
+}
+
 // --- Build ---
 
 buildBtn.addEventListener("click", async () => {
@@ -431,39 +578,42 @@ buildBtn.addEventListener("click", async () => {
   buildProgress.style.display = "";
   chapterStatus.innerHTML = "";
 
-  // Count total paragraphs
-  let totalParagraphs = 0;
+  // Plan every chapter up front so the progress denominator counts the same
+  // units the build loop completes: speaker segments in multi-voice mode,
+  // paragraphs otherwise. (Counting paragraphs while completing segments
+  // left the bar stuck short, e.g. "4 / 7" on a finished build.)
+  const plans = [];
+  let totalSegments = 0;
   for (const ch of state.chapters) {
+    let segments = [];
     try {
-      const result = JSON.parse(bridge.previewText(ch.content, JSON.stringify(state.pronunciations)));
-      totalParagraphs += result.paragraphs.filter(p => !p.is_scene_break && p.tts_text.trim()).length;
-    } catch { totalParagraphs += 1; }
-  }
-
-  let completed = 0;
-  let failed = 0;
-
-  for (let i = 0; i < state.chapters.length; i++) {
-    const ch = state.chapters[i];
-    addChapterStatus(ch.name, "building");
-
-    try {
-      const result = JSON.parse(bridge.previewText(ch.content, JSON.stringify(state.pronunciations)));
-
-      let segments;
       if (state.multiVoice) {
         const mvResult = JSON.parse(bridge.parseMultiVoice(
           ch.content,
           "",
           JSON.stringify(state.pronunciations)
         ));
-        segments = mvResult.segments;
+        segments = mvResult.segments.filter(s => s.text.trim());
       } else {
+        const result = JSON.parse(bridge.previewText(ch.content, JSON.stringify(state.pronunciations)));
         segments = result.paragraphs
           .filter(p => !p.is_scene_break && p.tts_text.trim())
           .map(p => ({ speaker: "", text: p.tts_text }));
       }
+    } catch (err) {
+      console.error(`Failed to plan ${ch.name}:`, err);
+    }
+    plans.push({ ch, segments });
+    totalSegments += Math.max(segments.length, 1);
+  }
 
+  let completed = 0;
+  let failed = 0;
+
+  for (const { ch, segments } of plans) {
+    addChapterStatus(ch.name, "building");
+
+    try {
       // Synthesize each segment
       const audioParts = [];
       for (const seg of segments) {
@@ -481,8 +631,8 @@ buildBtn.addEventListener("click", async () => {
         });
         audioParts.push(audio);
         completed++;
-        progressFill.style.width = `${(completed / totalParagraphs) * 100}%`;
-        progressText.textContent = `${completed} / ${totalParagraphs} paragraphs`;
+        progressFill.style.width = `${(completed / totalSegments) * 100}%`;
+        progressText.textContent = `${completed} / ${totalSegments} segments`;
       }
 
       // Concatenate all parts into one blob

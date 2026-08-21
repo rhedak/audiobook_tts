@@ -1,0 +1,8 @@
+name = "audiobook-tts-relay"
+main = "worker.js"
+compatibility_date = "2026-01-01"
+
+# Optional abuse guard: comma-separated list of origins allowed to use this
+# relay, e.g. ["https://henrik.github.io"]. Leave empty to allow any page.
+[vars]
+ALLOWED_ORIGINS = ""
