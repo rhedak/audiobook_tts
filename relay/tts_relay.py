@@ -161,13 +161,18 @@ def handle_client(client: socket.socket) -> None:
         if method == "GET" and path.startswith("/health"):
             handle_health(client)
             return
-        if path.startswith("/tts-ws"):
+        upgrade = header_value(request_head, "Upgrade") or b""
+        # Any WebSocket upgrade path is tunneled -- the page is configured
+        # with a full URL and typos in the path should not break it; this
+        # relay does exactly one thing.
+        if method == "GET" and upgrade.lower() == b"websocket":
             key = header_value(request_head, "Sec-WebSocket-Key")
             if key is None:
                 client.sendall(b"HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\n\r\n")
                 client.close()
                 return
-            handle_websocket(client, path[len("/tts-ws"):], key, backlog)
+            _path, _, query = path.partition("?")
+            handle_websocket(client, ("?" + query) if query else "", key, backlog)
             return
         client.sendall(b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n")
         client.close()

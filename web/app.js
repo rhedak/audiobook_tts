@@ -510,6 +510,14 @@ relaySaveBtn.addEventListener("click", () => {
   localStorage.setItem("tts-relay-url", url);
   describeRelay();
   checkRelayHealth(url);
+  try {
+    const path = new URL(url).pathname.replace(/\/+$/, "");
+    if (path && path !== "/tts-ws") {
+      relayStatus.textContent += ` Note: relays usually listen on /tts-ws (you entered ${path}).`;
+    }
+  } catch {
+    // checkRelayHealth already reports malformed URLs.
+  }
 });
 
 relayClearBtn.addEventListener("click", () => {
