@@ -19,6 +19,7 @@ from pydub import AudioSegment
 
 from audiobook_tts.chapters import select_chapter
 from audiobook_tts.cover import embed_cover
+from audiobook_tts.metadata import chapter_title, chapter_track, write_tags
 from audiobook_tts.speakers import split_speaker_segments
 from audiobook_tts.synthesis import synthesize
 from audiobook_tts.text import (
@@ -49,6 +50,11 @@ async def build_chapter(
     default_speaker: str = "",
     cover_image: Path | None = None,
     force: bool = False,
+    album: str | None = None,
+    artist: str | None = None,
+    title: str | None = None,
+    track: int | None = None,
+    track_total: int | None = None,
 ) -> None:
     """Synthesize a single chapter Markdown file to MP3.
 
@@ -56,6 +62,11 @@ async def build_chapter(
     speaker-tag segments and each gets the voice mapped from the dict
     (falling back to *voice* for unmapped speakers).  Otherwise every
     paragraph uses *voice*.
+
+    *album* / *artist* set the ID3 book title and author.  *title* and
+    *track* override the values otherwise derived from the chapter's first
+    heading and its ``chNN_`` filename; pass *track_total* to record the
+    track count as ``n/total``.
     """
     stem = path.stem
     out = out_dir / f"{stem}.mp3"
@@ -85,6 +96,15 @@ async def build_chapter(
 
     if cover_image is not None:
         embed_cover(out, cover_image)
+
+    write_tags(
+        out,
+        title=title if title is not None else chapter_title(content, stem),
+        album=album,
+        artist=artist,
+        track=track if track is not None else chapter_track(stem),
+        track_total=track_total,
+    )
 
     print(f"  built {out.name}")
 
@@ -162,8 +182,18 @@ async def build_all(
     cover_image: Path | None = None,
     force: bool = False,
     selector: str | None = None,
+    album: str | None = None,
+    artist: str | None = None,
 ) -> None:
-    """Build all (or selected) chapters, collecting failures for reporting."""
+    """Build all (or selected) chapters, collecting failures for reporting.
+
+    *album* / *artist* are written to every chapter's ID3 tags; track
+    numbers are assigned from each chapter's position in *chapters* (before
+    any *selector* filter), as ``n/total``.
+    """
+    track_by_stem = {p.stem: i + 1 for i, p in enumerate(chapters)}
+    track_total = len(chapters)
+
     if selector is not None:
         matches = select_chapter(chapters, selector)
         if not matches:
@@ -189,6 +219,10 @@ async def build_all(
                 default_speaker=default_speaker,
                 cover_image=cover_image,
                 force=force,
+                album=album,
+                artist=artist,
+                track=track_by_stem.get(path.stem),
+                track_total=track_total,
             )
         except Exception as exc:  # noqa: BLE001 - reported and re-run per chapter
             failed.append(path.stem)

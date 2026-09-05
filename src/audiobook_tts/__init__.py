@@ -5,6 +5,7 @@ __version__ = "0.1.0"
 from audiobook_tts.build import build_all, build_chapter
 from audiobook_tts.chapters import chapter_files, resolve, select_chapter
 from audiobook_tts.cover import embed_cover
+from audiobook_tts.metadata import chapter_title, chapter_track, write_tags
 from audiobook_tts.pronunciation_test import build_pronunciation_test
 from audiobook_tts.speakers import split_speaker_segments
 from audiobook_tts.synthesis import synthesize
@@ -24,6 +25,8 @@ __all__ = [
     "build_chapter",
     "build_pronunciation_test",
     "chapter_files",
+    "chapter_title",
+    "chapter_track",
     "embed_cover",
     "is_speakable",
     "md_to_tts_text",
@@ -33,4 +36,5 @@ __all__ = [
     "select_chapter",
     "split_speaker_segments",
     "synthesize",
+    "write_tags",
 ]
