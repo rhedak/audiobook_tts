@@ -56,6 +56,26 @@ relay never sees your text unless you point the page at it.
 
 Config (voice choices + pronunciations) can be saved to / loaded from JSON.
 
+## Engines and heteronyms
+
+By default chapters are narrated with edge-tts. Other local engines are
+optional extras (see `pyproject.toml`):
+
+```python
+from audiobook_tts import build_all, get_engine
+
+await build_all(
+    chapters, out_dir, voice="am_michael",
+    engine=get_engine("kokoro"),   # or "qwen" (voice: "ryan"), "chatterbox" (voice: "" or a reference .wav)
+    heteronyms=True,               # respell "read"/"lead"/"tear"/... by part of speech
+)
+```
+
+The heteronym pass needs spaCy and `en_core_web_sm` (the `heteronyms` extra).
+Its respellings are a starting point: listen to each one before publishing.
+Chatterbox and Qwen3-TTS need separate environments (see the extras comment in
+`pyproject.toml`).
+
 ## Development
 
 Requires `ffmpeg` on your PATH (MP3 export shells out to it; on macOS

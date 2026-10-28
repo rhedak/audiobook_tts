@@ -9,16 +9,21 @@ Supports two modes:
   to the narrator's name.
 
 Both modes use the streaming synthesis with onset-clip fix and retry from
-``synthesis.py``.
+``synthesis.py`` by default. Pass an *engine* (see ``audiobook_tts.engines``)
+to narrate with another backend, and ``heteronyms=True`` to respell
+context-dependent words such as "read" (requires the ``heteronyms`` extra).
 """
 
 import sys
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 
 from pydub import AudioSegment
 
 from audiobook_tts.chapters import select_chapter
 from audiobook_tts.cover import embed_cover
+from audiobook_tts.engines.base import Engine
+from audiobook_tts.heteronyms import apply_heteronyms
 from audiobook_tts.metadata import chapter_title, chapter_track, write_tags
 from audiobook_tts.speakers import split_speaker_segments
 from audiobook_tts.synthesis import synthesize
@@ -40,6 +45,8 @@ SPEAKER_CHANGE_PAUSE_MS = 400
 # Silence duration substituted for segments with no speakable content.
 SILENT_SEGMENT_MS = 600
 
+Synth = Callable[[str, str], Awaitable[AudioSegment]]
+
 
 async def build_chapter(
     path: Path,
@@ -55,6 +62,8 @@ async def build_chapter(
     title: str | None = None,
     track: int | None = None,
     track_total: int | None = None,
+    engine: Engine | None = None,
+    heteronyms: bool = False,
 ) -> None:
     """Synthesize a single chapter Markdown file to MP3.
 
@@ -67,6 +76,9 @@ async def build_chapter(
     *track* override the values otherwise derived from the chapter's first
     heading and its ``chNN_`` filename; pass *track_total* to record the
     track count as ``n/total``.
+
+    *engine* selects the TTS backend (default: edge-tts). *heteronyms* turns on
+    context-aware respelling of words like "read" before synthesis.
     """
     stem = path.stem
     out = out_dir / f"{stem}.mp3"
@@ -81,12 +93,14 @@ async def build_chapter(
     if pronunciations is None:
         pronunciations = {}
 
+    synth: Synth = engine.synthesize if engine is not None else synthesize
     if speaker_voices is not None:
         audio = await _build_multi_voice(
-            content, voice, pronunciations, speaker_voices, default_speaker
+            content, voice, pronunciations, speaker_voices, default_speaker,
+            synth, heteronyms,
         )
     else:
-        audio = await _build_single_voice(content, voice, pronunciations)
+        audio = await _build_single_voice(content, voice, pronunciations, synth, heteronyms)
 
     if audio is None or len(audio) == 0:
         print(f"  empty {path.name}, skipping")
@@ -109,10 +123,18 @@ async def build_chapter(
     print(f"  built {out.name}")
 
 
+def _prepare(text: str, pronunciations: dict[str, str], heteronyms: bool) -> str:
+    """Apply pronunciation respellings, then context-aware heteronym fixes."""
+    text = apply_pronunciations(text, pronunciations)
+    return apply_heteronyms(text) if heteronyms else text
+
+
 async def _build_single_voice(
     content: str,
     voice: str,
     pronunciations: dict[str, str],
+    synth: Synth,
+    heteronyms: bool,
 ) -> AudioSegment | None:
     """Synthesize all paragraphs with a single voice."""
     segments = parse_segments(content)
@@ -127,7 +149,7 @@ async def _build_single_voice(
             pending_pause_ms = SCENE_BREAK_PAUSE_MS
             continue
 
-        text = apply_pronunciations(normalize_unicode(seg), pronunciations)
+        text = _prepare(normalize_unicode(seg), pronunciations, heteronyms)
         if not is_speakable(text):
             continue
 
@@ -135,7 +157,7 @@ async def _build_single_voice(
             audio += AudioSegment.silent(duration=pending_pause_ms or PARAGRAPH_PAUSE_MS)
         pending_pause_ms = 0
 
-        audio += await synthesize(text, voice)
+        audio += await synth(text, voice)
 
     return audio
 
@@ -146,6 +168,8 @@ async def _build_multi_voice(
     pronunciations: dict[str, str],
     speaker_voices: dict[str, str],
     default_speaker: str,
+    synth: Synth,
+    heteronyms: bool,
 ) -> AudioSegment | None:
     """Synthesize with per-speaker voice switching."""
     segments = split_speaker_segments(
@@ -164,7 +188,7 @@ async def _build_multi_voice(
         if prev_speaker is not None and prev_speaker != speaker:
             audio += AudioSegment.silent(duration=SPEAKER_CHANGE_PAUSE_MS)
         if is_speakable(text):
-            audio += await synthesize(text, seg_voice)
+            audio += await synth(_prepare(text, {}, heteronyms), seg_voice)
         else:
             audio += AudioSegment.silent(duration=SILENT_SEGMENT_MS)
         prev_speaker = speaker
@@ -184,12 +208,15 @@ async def build_all(
     selector: str | None = None,
     album: str | None = None,
     artist: str | None = None,
+    engine: Engine | None = None,
+    heteronyms: bool = False,
 ) -> None:
     """Build all (or selected) chapters, collecting failures for reporting.
 
     *album* / *artist* are written to every chapter's ID3 tags; track
     numbers are assigned from each chapter's position in *chapters* (before
-    any *selector* filter), as ``n/total``.
+    any *selector* filter), as ``n/total``. *engine* and *heteronyms* are
+    passed to every chapter (see ``build_chapter``).
     """
     track_by_stem = {p.stem: i + 1 for i, p in enumerate(chapters)}
     track_total = len(chapters)
@@ -202,6 +229,7 @@ async def build_all(
         chapters = matches
 
     out_dir.mkdir(parents=True, exist_ok=True)
+    print(f"Engine: {engine.name if engine is not None else 'edge'}")
     print(f"Voice: {voice}")
     print(f"Output: {out_dir}")
     print(f"Chapters: {len(chapters)}")
@@ -223,6 +251,8 @@ async def build_all(
                 artist=artist,
                 track=track_by_stem.get(path.stem),
                 track_total=track_total,
+                engine=engine,
+                heteronyms=heteronyms,
             )
         except Exception as exc:  # noqa: BLE001 - reported and re-run per chapter
             failed.append(path.stem)
