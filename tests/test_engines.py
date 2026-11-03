@@ -8,6 +8,7 @@ import numpy as np
 import pytest
 from pydub import AudioSegment
 
+from audiobook_tts import heteronyms
 from audiobook_tts.build import build_chapter
 from audiobook_tts.engines import ENGINE_NAMES, LocalEngine, get_engine, pcm_to_segment
 from audiobook_tts.engines.edge import EdgeEngine
@@ -78,6 +79,9 @@ async def test_edge_engine_delegates_to_synthesis(monkeypatch):
     assert len(seg) == 10
 
 
+@pytest.mark.skipif(
+    not heteronyms.spacy_available(), reason="spaCy model not installed"
+)
 async def test_build_chapter_uses_given_engine_and_heteronyms(tmp_path):
     chapter = tmp_path / "ch01_test.md"
     chapter.write_text("# Chapter 1: Test\n\nI read the book yesterday.\n", encoding="utf-8")

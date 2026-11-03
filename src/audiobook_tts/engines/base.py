@@ -8,9 +8,12 @@ from __future__ import annotations
 
 import asyncio
 from abc import ABC, abstractmethod
+from typing import TYPE_CHECKING
 
-import numpy as np
 from pydub import AudioSegment
+
+if TYPE_CHECKING:
+    import numpy as np
 
 # Matches the splice smoothing in ``synthesis.py``: prevents clicks where
 # clips join.
@@ -19,6 +22,9 @@ _SPLICE_FADE_MS = 15
 
 def pcm_to_segment(samples: np.ndarray, sample_rate: int) -> AudioSegment:
     """Convert mono float samples in [-1, 1] to a 16-bit ``AudioSegment``."""
+    # numpy only comes with the model extras, so it is imported here, not for the whole package.
+    import numpy as np
+
     flat = np.asarray(samples, dtype=np.float32).reshape(-1)
     pcm = (np.clip(flat, -1.0, 1.0) * 32767).astype("<i2")
     segment = AudioSegment(

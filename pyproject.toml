@@ -35,8 +35,16 @@ heteronyms = [
     "en_core_web_sm @ https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl",
 ]
 
+# Chatterbox and Qwen pin different transformers versions, so uv must lock them as alternatives
+# rather than as one environment.
+[tool.uv]
+conflicts = [
+    [{ extra = "qwen" }, { extra = "chatterbox" }],
+]
+
 [dependency-groups]
 dev = [
+    "numpy>=1.26",
     "pytest>=9.1.1",
     "pytest-asyncio>=1.4.0",
 ]
