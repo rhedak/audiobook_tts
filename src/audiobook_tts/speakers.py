@@ -88,10 +88,24 @@ def strip_redundant_speaker_prefix(text: str, speaker: str) -> str:
     """
     if not speaker:
         return text
+    text = strip_speaker_label(text, speaker)
+    text = re.sub(rf'"\s*{re.escape(speaker)}(,[^.\n]*)?\.\s*"', '" "', text)
+    text = re.sub(rf"\s*{re.escape(speaker)}(,[^.\n]*)?\.?\s*$", "", text)
+    return text
+
+
+def strip_speaker_label(text: str, speaker: str) -> str:
+    """Drop the speaker's name where it is a label, not spoken words: a
+    "Name: " or "Name, descriptor: " prefix, a "Name's voice, descriptor: "
+    prefix, and a bare header line naming the speaker.
+
+    Attribution clauses such as "said Gero, who had read it." are left alone,
+    so the words are kept when the Narrator reads them.
+    """
+    if not speaker:
+        return text
     text = re.sub(
         rf"(^|\n)\s*{re.escape(speaker)}('s [^,:\n]*)?(,[^:\n]*)?:\s*", r"\1", text
     )
     text = re.sub(rf"^{re.escape(speaker)}\n+", "", text)
-    text = re.sub(rf'"\s*{re.escape(speaker)}(,[^.\n]*)?\.\s*"', '" "', text)
-    text = re.sub(rf"\s*{re.escape(speaker)}(,[^.\n]*)?\.?\s*$", "", text)
     return text

@@ -1,25 +1,25 @@
 ---
 name: audiobook-speakers
-description: Prepare a short story for a multi-voice audiobook. Lists the speakers, agrees the voice set with the author, adds [[Speaker]] tags to each chapter without changing a word, and saves a reusable tagged copy. Use when the author asks to add speaker tags, plan character voices, or prepare a story's dialogue for the audiobook builder.
+description: Prepare a short story for a multi-voice audiobook. Lists the speakers, agrees the voice set with the author, locks each voice, adds [[Speaker]] tags to each chapter without changing a word, and saves a reusable tagged copy. Use when the author asks to add speaker tags, plan character voices, or prepare a story's dialogue for the audiobook builder. For a whole audiobook from start to finish, use create-audiobook instead.
 ---
 
 # Audiobook speakers
 
-This skill tags a story's dialogue with speaker names, so the audiobook builder can
-give each speaker a voice. It does not synthesize audio. The voices are
-OmniVoice voice-design descriptions, and the builder reads the tags through
-`audiobook_tts.speakers`.
+This skill tags a story's dialogue with speaker names, so `audiobook-build` can
+give each speaker a voice. It does not synthesize audio on its own; the builder
+does that. The voices are OmniVoice voice designs, locked to clone prompts.
 
-Run it on one story at a time. Whole story at once for now.
+Run it on one story at a time, from the audiobook_tts repo root, with `<story>`
+given as the path to the story folder. Whole story at once for now.
 
-In this document `<story>` is the story's folder, which holds `notes.md`,
-`chapters/` and, after the skill has run, `speaker_tags/`. Run commands from the
-`audiobook_tts` repo root, with `<story>` given as a path to that folder.
+## Setup
 
-The builder that turns the tagged chapters into MP3s is
-`scripts/build_audiobook_chapters.py` in the short_stories repo. Its path is
-`../short_stories/scripts/build_audiobook_chapters.py` from here. The tagging
-script is `scripts/tag_speakers.py` in this repo.
+```bash
+uv sync --extra omnivoice --extra heteronyms
+```
+
+- `audiobook-build` is the builder. It is installed with this package.
+- `scripts/tag_speakers.py` is the tagging script in this repo.
 
 ## Inputs
 
@@ -48,11 +48,18 @@ Use AskUserQuestion, with at most four questions per call. Cover:
    group (for example male and female), or one shared voice.
 4. How minor speakers (guards, crowd) are voiced.
 
-Then write `<story>/speaker_tags/voices.json`. Each entry has a `design`
-string built only from OmniVoice's attribute list (see the OmniVoice repo,
-`docs/voice-design.md`): gender, age, pitch, whisper, and English accent. Pick
-attributes that keep neighbouring voices apart. Mark the strings as drafts. The
-author listens to them before a build.
+Then write `<story>/speaker_tags/voices.json`:
+
+```json
+{"engine": "omnivoice",
+ "voices": {"Narrator": {"design": "male, middle-aged, moderate pitch, british accent"},
+            "Ada": {"design": "female, young adult, high pitch, american accent"}}}
+```
+
+Each `design` is built only from OmniVoice's attribute list (see the OmniVoice
+repo, `docs/voice-design.md`): gender, age, pitch, whisper, and English accent.
+Pick attributes that keep neighbouring voices apart. Mark the strings as drafts.
+The author listens to them before a build.
 
 ### Step 2b: Hear the voices, then map them
 
@@ -63,9 +70,9 @@ to choose by ear:
    {"label": "design string", ...}}`. Give each character role two or three
    candidates (for example a low and a middle male voice, each with two accents).
    Label them plainly, such as `male_low_british`.
-2. Run `uv run --no-project python ../short_stories/scripts/build_audiobook_chapters.py <story> --samples`.
-   It writes `<story>/speaker_tags/samples/<label>.mp3`, every clip saying the same
-   fixed sentence, so the voices can be compared fairly.
+2. Run `audiobook-build <story> --samples`. It writes
+   `<story>/speaker_tags/samples/<label>.mp3`, every clip saying the same fixed
+   sentence, so the voices can be compared fairly.
 3. Tell the author which clips to listen to, then ask which candidate goes to
    each character (AskUserQuestion, with the candidate labels as options, at
    most four per question; group by role when there are more). The author can
@@ -80,12 +87,12 @@ the chat first.
 A design string is sampled again for every paragraph, so the voice drifts after
 each pause. Once `voices.json` is final, lock every speaker:
 
-```
-uv run --no-project python ../short_stories/scripts/build_audiobook_chapters.py <story> --clone-voices
+```bash
+audiobook-build <story> --clone-voices
 ```
 
-This writes `voices/<story>/<Speaker>.pt` (a saved OmniVoice clone prompt, made
-from the candidate sample for that design, or a fresh synthesis of it) and
+This writes `<story>/voices/<Speaker>.pt`, a saved OmniVoice clone prompt made
+from the candidate sample for that design (or a fresh synthesis of it), and
 rewrites `voices.json` to point at it. Run it again after any voice change. The
 builder warns about each speaker still on a design string. Do not build the
 audiobook until every speaker is locked.
@@ -97,17 +104,19 @@ speaker change, in text order:
 
 ```json
 [
-  {"at": "\"Fair question,\"", "speaker": "Gero"},
+  {"at": "\"Fair question,\"", "speaker": "Ada"},
   {"at": "She picked up her tray.", "speaker": "Narrator"},
-  {"at": "Still here.", "speaker": "Sister", "n": 2}
+  {"at": "Still here.", "speaker": "Ada", "n": 2}
 ]
 ```
 
 - `at` is exact text from the chapter that starts the new speaker's segment. It
   must occur at least `n` times (default 1, the first occurrence). Pick text that
   is unique, or give `n`.
-- Dialogue goes to its speaker. Attribution clauses ("he said", "Linnea said")
-  stay with the speaker.
+- Dialogue goes to its speaker. Attribution clauses ("he said", "Ada said") can
+  stay in the speaker's segment: the builder reads any text outside the quotation
+  marks in a speaker's paragraph in the Narrator's voice, so the listener hears
+  "he said" in the narrator's voice and the words in the speaker's.
 - Narration goes to `Narrator`, including action sentences in the middle of a
   speech paragraph ("She picked up her tray.").
 - Italic recollections of a told story go to `Narrator`, unless the author decides otherwise.
@@ -162,13 +171,16 @@ Under `<story>/speaker_tags/`:
 - `chNN_name.md`: the tagged chapters, ready for the builder.
 - `ops/chNN.json`: the decisions. If a chapter's prose changes, rerun the script
   against the same ops file. It fails clearly where an anchor no longer matches.
-- `voices.json`: the voice set and design strings.
+- `voices.json`: the voice set, with each locked voice pointing at its clone prompt.
 - `pronunciations.json`: the agreed respellings, if any.
 - `candidates.json` and `samples/`: the voice candidates and their clips, if the
   voices were chosen by ear. Keep them, so a voice can be changed after a full
   chapter has been heard.
 - `decisions.md`: the voice set, ambiguous decisions, homograph decisions, and
   any assumptions.
+
+Keep `<story>/voices/` with the story, since the builder reads clone prompts from
+there.
 
 Do not commit unless the author asks.
 
@@ -182,5 +194,5 @@ Do not commit unless the author asks.
   normal break, two blank lines a longer one. Do not add blank lines to the prose
   just to lengthen a pause without the author's agreement, since the chapter
   file is the text that is published.
-- The style rules of the story repo apply to notes and headings: no double
-  hyphens, and no em dashes except in dialogue.
+- Keep the style rules of the story's own guide for notes and headings, such as
+  no double hyphens.

@@ -14,6 +14,7 @@ to narrate with another backend, and ``heteronyms=True`` to respell
 context-dependent words such as "read" (requires the ``heteronyms`` extra).
 """
 
+import re
 import sys
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
@@ -25,8 +26,8 @@ from audiobook_tts.chapters import select_chapter
 from audiobook_tts.cover import embed_cover
 from audiobook_tts.engines.base import Engine
 from audiobook_tts.heteronyms import apply_heteronyms
+from audiobook_tts.speakers import strip_redundant_speaker_prefix, strip_speaker_label
 from audiobook_tts.metadata import chapter_title, chapter_track, write_tags
-from audiobook_tts.speakers import strip_redundant_speaker_prefix
 from audiobook_tts.synthesis import synthesize
 from audiobook_tts.text import (
     apply_pronunciations,
@@ -153,12 +154,50 @@ class Utterance:
     pause_before_ms: int
 
 
+NARRATOR_SPEAKER = "Narrator"
+
+# Silence between dialogue and the attribution around it ("Fair question," said
+# Gero). Short, so the two read as one sentence.
+ATTRIBUTION_PAUSE_MS = 120
+
+_QUOTED_RE = re.compile(r'"[^"]*"')
+
+
+def _balanced_quotes(text: str) -> bool:
+    count = text.count('"')
+    return count > 0 and count % 2 == 0
+
+
+def split_attribution(text: str, speaker: str) -> list[tuple[str, str]]:
+    """Split one speaker paragraph into (speaker, text) pieces.
+
+    Quoted speech goes to *speaker*. The text outside the quotes ("he said",
+    "who had read it") goes to the Narrator, so the attribution is read in the
+    narrator's voice. A paragraph with no quotes, or unbalanced quotes, stays
+    whole with the speaker.
+    """
+    if not _balanced_quotes(text):
+        return [(speaker, text)]
+    pieces: list[tuple[str, str]] = []
+    pos = 0
+    for match in _QUOTED_RE.finditer(text):
+        if match.start() > pos:
+            pieces.append((NARRATOR_SPEAKER, text[pos : match.start()]))
+        pieces.append((speaker, match.group(0)))
+        pos = match.end()
+    if pos < len(text):
+        pieces.append((NARRATOR_SPEAKER, text[pos:]))
+    return [(s, t) for s, t in pieces if is_speakable(t)]
+
+
 def plan_utterances(content: str, default_speaker: str = "") -> list[Utterance]:
     """Turn chapter Markdown into the paragraphs to speak, in order.
 
     Speaker tags switch *speaker* from the next paragraph on. Paragraphs with
     no speakable text are dropped. Redundant speaker attributions are stripped
-    when a speaker is set, so a character does not say their own name.
+    when a speaker is set, so a character does not say their own name. Inside a
+    non-narrator speaker's paragraph, the text outside the quotes is spoken by
+    the Narrator (see :func:`split_attribution`).
     """
     utterances: list[Utterance] = []
     speaker = default_speaker
@@ -173,21 +212,29 @@ def plan_utterances(content: str, default_speaker: str = "") -> list[Utterance]:
             scene_before = True
             continue
         text = normalize_unicode(block.text)
-        if speaker:
+        splittable = bool(speaker) and speaker != NARRATOR_SPEAKER and _balanced_quotes(text)
+        if splittable:
+            # The attribution is narrated, so its words are kept.
+            text = strip_speaker_label(text, speaker)
+        elif speaker:
             text = strip_redundant_speaker_prefix(text, speaker)
         if not is_speakable(text):
             continue
-        if prev_speaker is None:
-            pause = 0
-        else:
-            pause = pause_before_ms(
-                block.blanks,
-                heading_before=prev_heading,
-                scene_before=scene_before,
-                speaker_changed=speaker != prev_speaker,
-            )
-        utterances.append(Utterance(speaker, text, pause))
-        prev_speaker = speaker
+        pieces = split_attribution(text, speaker) if splittable else [(speaker, text)]
+        for index, (piece_speaker, piece_text) in enumerate(pieces):
+            if index > 0:
+                pause = ATTRIBUTION_PAUSE_MS
+            elif prev_speaker is None:
+                pause = 0
+            else:
+                pause = pause_before_ms(
+                    block.blanks,
+                    heading_before=prev_heading,
+                    scene_before=scene_before,
+                    speaker_changed=piece_speaker != prev_speaker,
+                )
+            utterances.append(Utterance(piece_speaker, piece_text, pause))
+            prev_speaker = piece_speaker
         prev_heading = block.heading
         scene_before = False
     return utterances

@@ -21,6 +21,9 @@ dependencies = [
     "audioop-lts>=0.2; python_version >= '3.13'",
 ]
 
+[project.scripts]
+audiobook-build = "audiobook_tts.cli:main"
+
 # Engines and helpers beyond edge-tts. Install only what you use, e.g.
 #   uv sync --extra kokoro --extra heteronyms
 # Chatterbox, Qwen and OmniVoice pin conflicting transformers versions (OmniVoice

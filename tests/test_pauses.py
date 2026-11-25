@@ -1,6 +1,7 @@
 """Pauses between paragraphs, from the blank lines and headings in the source."""
 
 from audiobook_tts.build import (
+    ATTRIBUTION_PAUSE_MS,
     PAUSE_BY_BLANK_LINES_MS,
     SCENE_BREAK_PAUSE_MS,
     SPEAKER_CHANGE_PAUSE_MS,
@@ -50,12 +51,14 @@ def test_more_blank_lines_mean_longer_pauses():
 
 
 def test_speaker_change_uses_short_pause_and_keeps_speaker():
+    # "he said." is attribution, so the Narrator reads it after the speech.
     content = "Narration.\n\n[[Gero]]\n\n\"Hello,\" he said.\n\n[[Narrator]]\n\nMore narration.\n"
     utts = plan_utterances(content, default_speaker="Narrator")
-    assert [(u.speaker, u.pause_before_ms) for u in utts] == [
-        ("Narrator", 0),
-        ("Gero", SPEAKER_CHANGE_PAUSE_MS),
-        ("Narrator", SPEAKER_CHANGE_PAUSE_MS),
+    assert [(u.speaker, u.text, u.pause_before_ms) for u in utts] == [
+        ("Narrator", "Narration.", 0),
+        ("Gero", '"Hello,"', SPEAKER_CHANGE_PAUSE_MS),
+        ("Narrator", " he said.", ATTRIBUTION_PAUSE_MS),
+        ("Narrator", "More narration.", PAUSE_BY_BLANK_LINES_MS[1]),
     ]
 
 
