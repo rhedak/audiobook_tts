@@ -16,6 +16,7 @@ context-dependent words such as "read" (requires the ``heteronyms`` extra).
 
 import sys
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from pathlib import Path
 
 from pydub import AudioSegment
@@ -25,25 +26,24 @@ from audiobook_tts.cover import embed_cover
 from audiobook_tts.engines.base import Engine
 from audiobook_tts.heteronyms import apply_heteronyms
 from audiobook_tts.metadata import chapter_title, chapter_track, write_tags
-from audiobook_tts.speakers import split_speaker_segments
+from audiobook_tts.speakers import strip_redundant_speaker_prefix
 from audiobook_tts.synthesis import synthesize
 from audiobook_tts.text import (
-    SCENE_BREAK,
     apply_pronunciations,
     is_speakable,
     normalize_unicode,
-    parse_segments,
+    parse_blocks,
 )
 
-# Silence durations inserted between synthesized paragraph clips.
-PARAGRAPH_PAUSE_MS = 450
+# Silence before a paragraph, by the blank source lines before it: one is a
+# normal paragraph break, two or more is a longer break (3 is the cap).
+PAUSE_BY_BLANK_LINES_MS = {1: 450, 2: 900, 3: 1500}
+# Silence after a chapter heading, before the text that follows it.
+TITLE_PAUSE_MS = 1500
+# Silence before the first paragraph after a ``---`` scene break.
 SCENE_BREAK_PAUSE_MS = 900
-
-# Pause inserted between consecutive segments spoken by different speakers.
+# Silence before a paragraph whose speaker changed (one blank line only).
 SPEAKER_CHANGE_PAUSE_MS = 400
-
-# Silence duration substituted for segments with no speakable content.
-SILENT_SEGMENT_MS = 600
 
 Synth = Callable[[str, str], Awaitable[AudioSegment]]
 
@@ -94,13 +94,9 @@ async def build_chapter(
         pronunciations = {}
 
     synth: Synth = engine.synthesize if engine is not None else synthesize
-    if speaker_voices is not None:
-        audio = await _build_multi_voice(
-            content, voice, pronunciations, speaker_voices, default_speaker,
-            synth, heteronyms,
-        )
-    else:
-        audio = await _build_single_voice(content, voice, pronunciations, synth, heteronyms)
+    audio = await _build_audio(
+        content, voice, pronunciations, speaker_voices, default_speaker, synth, heteronyms,
+    )
 
     if audio is None or len(audio) == 0:
         print(f"  empty {path.name}, skipping")
@@ -129,70 +125,101 @@ def _prepare(text: str, pronunciations: dict[str, str], heteronyms: bool) -> str
     return apply_heteronyms(text) if heteronyms else text
 
 
-async def _build_single_voice(
-    content: str,
-    voice: str,
-    pronunciations: dict[str, str],
-    synth: Synth,
-    heteronyms: bool,
-) -> AudioSegment | None:
-    """Synthesize all paragraphs with a single voice."""
-    segments = parse_segments(content)
-    if not any(is_speakable(seg) for seg in segments if seg != SCENE_BREAK):
-        return None
+def pause_before_ms(
+    blanks: int, heading_before: bool, scene_before: bool, speaker_changed: bool
+) -> int:
+    """Silence before a paragraph, from the source layout.
 
-    audio = AudioSegment.empty()
-    pending_pause_ms = 0
+    A scene break wins, then the pause after a chapter heading, then a speaker
+    change (a single blank line gets the shorter speaker-change pause). Otherwise
+    the blank lines decide: one blank line is a normal paragraph break, two or
+    more is a longer break.
+    """
+    if scene_before:
+        return SCENE_BREAK_PAUSE_MS
+    if heading_before:
+        return TITLE_PAUSE_MS
+    if speaker_changed and blanks <= 1:
+        return SPEAKER_CHANGE_PAUSE_MS
+    return PAUSE_BY_BLANK_LINES_MS[min(max(blanks, 1), 3)]
 
-    for seg in segments:
-        if seg == SCENE_BREAK:
-            pending_pause_ms = SCENE_BREAK_PAUSE_MS
+
+@dataclass(frozen=True)
+class Utterance:
+    """One paragraph to speak, with the speaker and the silence before it."""
+
+    speaker: str
+    text: str
+    pause_before_ms: int
+
+
+def plan_utterances(content: str, default_speaker: str = "") -> list[Utterance]:
+    """Turn chapter Markdown into the paragraphs to speak, in order.
+
+    Speaker tags switch *speaker* from the next paragraph on. Paragraphs with
+    no speakable text are dropped. Redundant speaker attributions are stripped
+    when a speaker is set, so a character does not say their own name.
+    """
+    utterances: list[Utterance] = []
+    speaker = default_speaker
+    prev_speaker: str | None = None
+    prev_heading = False
+    scene_before = False
+    for block in parse_blocks(content):
+        if block.kind == "tag":
+            speaker = block.text
             continue
-
-        text = _prepare(normalize_unicode(seg), pronunciations, heteronyms)
+        if block.kind == "scene":
+            scene_before = True
+            continue
+        text = normalize_unicode(block.text)
+        if speaker:
+            text = strip_redundant_speaker_prefix(text, speaker)
         if not is_speakable(text):
             continue
+        if prev_speaker is None:
+            pause = 0
+        else:
+            pause = pause_before_ms(
+                block.blanks,
+                heading_before=prev_heading,
+                scene_before=scene_before,
+                speaker_changed=speaker != prev_speaker,
+            )
+        utterances.append(Utterance(speaker, text, pause))
+        prev_speaker = speaker
+        prev_heading = block.heading
+        scene_before = False
+    return utterances
 
-        if len(audio) > 0:
-            audio += AudioSegment.silent(duration=pending_pause_ms or PARAGRAPH_PAUSE_MS)
-        pending_pause_ms = 0
 
-        audio += await synth(text, voice)
-
-    return audio
-
-
-async def _build_multi_voice(
+async def _build_audio(
     content: str,
     voice: str,
     pronunciations: dict[str, str],
-    speaker_voices: dict[str, str],
+    speaker_voices: dict[str, str] | None,
     default_speaker: str,
     synth: Synth,
     heteronyms: bool,
 ) -> AudioSegment | None:
-    """Synthesize with per-speaker voice switching."""
-    segments = split_speaker_segments(
-        content, default_speaker=default_speaker, pronunciations=pronunciations
-    )
-    if not segments:
+    """Synthesize a chapter paragraph by paragraph, with the pauses between.
+
+    Each paragraph is its own request, so the pauses are exact silences rather
+    than whatever the engine does with newlines. With *speaker_voices*, each
+    paragraph gets its speaker's voice, falling back to *voice*.
+    """
+    utterances = plan_utterances(content, default_speaker)
+    if not utterances:
         return None
 
     audio = AudioSegment.empty()
-    prev_speaker = None
-
-    for speaker, text in segments:
-        seg_voice = speaker_voices.get(speaker, voice)
-        if speaker and speaker != default_speaker and speaker not in speaker_voices:
-            print(f"  note  unmapped speaker '{speaker}', using {seg_voice}")
-        if prev_speaker is not None and prev_speaker != speaker:
-            audio += AudioSegment.silent(duration=SPEAKER_CHANGE_PAUSE_MS)
-        if is_speakable(text):
-            audio += await synth(_prepare(text, {}, heteronyms), seg_voice)
-        else:
-            audio += AudioSegment.silent(duration=SILENT_SEGMENT_MS)
-        prev_speaker = speaker
-
+    for utt in utterances:
+        if len(audio) > 0:
+            audio += AudioSegment.silent(duration=utt.pause_before_ms)
+        seg_voice = voice
+        if speaker_voices is not None:
+            seg_voice = speaker_voices.get(utt.speaker, voice)
+        audio += await synth(_prepare(utt.text, pronunciations, heteronyms), seg_voice)
     return audio if len(audio) > 0 else None
 
 

@@ -6,6 +6,7 @@ identical functions. They are factored out here to avoid duplication.
 """
 
 import re
+from dataclasses import dataclass
 
 _SPEAKABLE_RE = re.compile(r"[A-Za-z0-9]")
 
@@ -110,6 +111,88 @@ def parse_segments(content: str) -> list[str]:
     flush()
 
     return paragraphs
+
+
+# A speaker tag line: ``[[Name]]`` on its own (see ``speakers.py``).
+_TAG_LINE_RE = re.compile(r"^\[\[([^\[\]]+)\]\]$")
+
+
+@dataclass(frozen=True)
+class Block:
+    """One unit of chapter Markdown, in reading order.
+
+    *kind* is ``"para"`` (text to speak), ``"scene"`` (a ``---`` break) or
+    ``"tag"`` (a speaker switch; *text* holds the speaker's name). *blanks*
+    counts the blank source lines before the block, so a later stage can pause
+    longer after a double blank line. *heading* marks a Markdown heading line.
+    """
+
+    kind: str
+    text: str = ""
+    blanks: int = 0
+    heading: bool = False
+
+
+def _clean_line(line: str) -> str:
+    """Strip Markdown markers from one line, keeping its spoken text."""
+    line = re.sub(r"^#{1,6}\s+", "", line)
+    line = re.sub(r"\*{1,3}([^*]+)\*{1,3}", r"\1", line)
+    line = re.sub(r"!\[[^\]]*\]\([^)]*\)[^}]*\{[^}]*\}", "", line)
+    line = re.sub(r"!\[[^\]]*\]\([^)]*\)", "", line)
+    return line.strip()
+
+
+def parse_blocks(content: str) -> list[Block]:
+    """Like ``parse_segments``, but keeps the structure the pauses need.
+
+    Returns paragraphs, scene breaks and speaker tags in reading order, each
+    with the number of blank lines before it. Headings are their own
+    paragraph with ``heading=True``. Paragraph text is joined the same way
+    ``parse_segments`` joins it.
+    """
+    blocks: list[Block] = []
+    buf: list[str] = []
+    buf_blanks = 0  # blank lines before the open paragraph
+    blank_run = 0  # blank lines since the last line of text
+
+    def flush() -> None:
+        if buf:
+            blocks.append(Block("para", " ".join(buf), buf_blanks))
+            buf.clear()
+
+    for line in content.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            flush()
+            blank_run += 1
+            continue
+        if re.fullmatch(r"-{3,}", stripped):
+            flush()
+            blocks.append(Block("scene", blanks=blank_run))
+            blank_run = 0
+            continue
+        tag = _TAG_LINE_RE.match(stripped)
+        if tag:
+            flush()
+            blocks.append(Block("tag", tag.group(1).strip(), blank_run))
+            blank_run = 0
+            continue
+        if stripped.startswith("#"):
+            flush()
+            text = _clean_line(line)
+            if text:
+                blocks.append(Block("para", text, blank_run, heading=True))
+                blank_run = 0
+            continue
+        text = _clean_line(line)
+        if not text:
+            continue
+        if not buf:
+            buf_blanks = blank_run
+            blank_run = 0
+        buf.append(text)
+    flush()
+    return blocks
 
 
 def md_to_tts_text(content: str) -> str:
