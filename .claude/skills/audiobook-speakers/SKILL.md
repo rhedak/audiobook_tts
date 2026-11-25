@@ -75,6 +75,21 @@ to choose by ear:
 AskUserQuestion cannot play audio, so the author listens to the files outside
 the chat first.
 
+### Step 2c: Lock each voice to a clone prompt (required)
+
+A design string is sampled again for every paragraph, so the voice drifts after
+each pause. Once `voices.json` is final, lock every speaker:
+
+```
+uv run --no-project python ../short_stories/scripts/build_audiobook_chapters.py <story> --clone-voices
+```
+
+This writes `voices/<story>/<Speaker>.pt` (a saved OmniVoice clone prompt, made
+from the candidate sample for that design, or a fresh synthesis of it) and
+rewrites `voices.json` to point at it. Run it again after any voice change. The
+builder warns about each speaker still on a design string. Do not build the
+audiobook until every speaker is locked.
+
 ## Step 3: Add speaker tags
 
 Work chapter by chapter. For each chapter, write an ops file with one entry per

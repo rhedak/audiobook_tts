@@ -2,7 +2,7 @@
 <project version="4">
   <component name="ProjectModuleManager">
     <modules>
-      <module fileurl="file://$PROJECT_DIR$/.idea/audiobook_tts.iml" filepath="$PROJECT_DIR$/.idea/audiobook_tts.iml" />
+      <module fileurl="file://$PROJECT_DIR$/.idea/audiobook-tts.iml" filepath="$PROJECT_DIR$/.idea/audiobook-tts.iml" />
     </modules>
   </component>
 </project>

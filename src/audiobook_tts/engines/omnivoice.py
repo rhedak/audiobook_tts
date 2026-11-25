@@ -57,14 +57,27 @@ class OmniVoiceEngine(LocalEngine):
 
         *ref_text* is the exact transcript of *ref_audio*. Keep the clip to 3-10 seconds.
         """
+        import torch
+
         prompt = self._load().create_voice_clone_prompt(ref_audio=ref_audio, ref_text=ref_text)
-        prompt.save(out_path)
+        # omnivoice 0.2.0's VoiceClonePrompt is a plain dataclass with no save(),
+        # so store its fields and rebuild it on load.
+        torch.save(
+            {
+                "ref_audio_tokens": prompt.ref_audio_tokens,
+                "ref_text": prompt.ref_text,
+                "ref_rms": prompt.ref_rms,
+            },
+            out_path,
+        )
 
     def _clone_prompt(self, path: str):
         if path not in self._prompts:
-            from omnivoice import VoiceClonePrompt
+            import torch
+            from omnivoice.models.omnivoice import VoiceClonePrompt
 
-            self._prompts[path] = VoiceClonePrompt.load(path)
+            fields = torch.load(path, map_location="cpu", weights_only=False)
+            self._prompts[path] = VoiceClonePrompt(**fields)
         return self._prompts[path]
 
     def _generate(self, text: str, voice: str) -> AudioSegment:
