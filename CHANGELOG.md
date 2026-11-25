@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- `omnivoice` engine (OmniVoice 0.2.0): voice design from attributes, or a saved
+  clone prompt per character. Optional extra `omnivoice`. Lives in its own
+  environment; `uv.lock` records it as conflicting with `qwen` and `chatterbox`.
+
 ## 0.2.0
 
 - Engine interface (`audiobook_tts.engines`): `edge` (default, unchanged

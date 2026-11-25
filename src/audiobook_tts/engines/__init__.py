@@ -8,7 +8,7 @@ from audiobook_tts.engines.base import Engine, LocalEngine, pcm_to_segment
 
 __all__ = ["Engine", "LocalEngine", "get_engine", "pcm_to_segment", "ENGINE_NAMES"]
 
-ENGINE_NAMES = ("edge", "kokoro", "qwen", "chatterbox")
+ENGINE_NAMES = ("edge", "kokoro", "qwen", "chatterbox", "omnivoice")
 
 
 def get_engine(name: str, **options) -> Engine:
@@ -33,4 +33,8 @@ def get_engine(name: str, **options) -> Engine:
         from audiobook_tts.engines.chatterbox import ChatterboxEngine
 
         return ChatterboxEngine(**options)
+    if name == "omnivoice":
+        from audiobook_tts.engines.omnivoice import OmniVoiceEngine
+
+        return OmniVoiceEngine(**options)
     raise ValueError(f"unknown engine {name!r}; expected one of {', '.join(ENGINE_NAMES)}")

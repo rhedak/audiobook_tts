@@ -23,13 +23,14 @@ dependencies = [
 
 # Engines and helpers beyond edge-tts. Install only what you use, e.g.
 #   uv sync --extra kokoro --extra heteronyms
-# Chatterbox pins transformers versions that conflict with qwen-tts, so it
-# cannot share an environment with the qwen extra. Its setuptools pin keeps
-# the perth watermark import working.
+# Chatterbox, Qwen and OmniVoice pin conflicting transformers versions (OmniVoice
+# needs transformers>=5.3, qwen-tts pins 4.57.3), so each runs in its own
+# environment. Chatterbox's setuptools pin keeps the perth watermark import working.
 [project.optional-dependencies]
 kokoro = ["kokoro==0.9.4"]
 qwen = ["qwen-tts==0.1.1"]
 chatterbox = ["chatterbox-tts==0.1.7", "setuptools<81"]
+omnivoice = ["omnivoice==0.2.0"]
 heteronyms = [
     "spacy>=3.8",
     "en_core_web_sm @ https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl",
@@ -40,6 +41,8 @@ heteronyms = [
 [tool.uv]
 conflicts = [
     [{ extra = "qwen" }, { extra = "chatterbox" }],
+    [{ extra = "qwen" }, { extra = "omnivoice" }],
+    [{ extra = "chatterbox" }, { extra = "omnivoice" }],
 ]
 
 [dependency-groups]

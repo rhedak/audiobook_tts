@@ -73,8 +73,32 @@ await build_all(
 
 The heteronym pass needs spaCy and `en_core_web_sm` (the `heteronyms` extra).
 Its respellings are a starting point: listen to each one before publishing.
-Chatterbox and Qwen3-TTS need separate environments (see the extras comment in
-`pyproject.toml`).
+Chatterbox, Qwen3-TTS and OmniVoice need separate environments (see the extras
+comment in `pyproject.toml`).
+
+### OmniVoice voices
+
+`get_engine("omnivoice")` takes one of three voice forms per speaker, so narrator
+and characters can each have their own:
+
+- `""`: the model picks a voice.
+- `"male, middle-aged, moderate pitch, british accent"`: a voice designed from attributes.
+- `"voices/mara.pt"`: a saved clone prompt, made once from a 3–10 second reference
+  recording with `OmniVoiceEngine().save_clone_prompt(ref_wav, ref_text, "voices/mara.pt")`.
+  Reuse the same file for every chapter so the voice stays the same.
+
+Pass the mapping with `speaker_voices` and `[[Name]]` tags in the text:
+
+```python
+await build_all(
+    chapters, out_dir, voice="male, middle-aged, moderate pitch, british accent",
+    speaker_voices={"Mara": "voices/mara.pt"},
+    default_speaker="Narrator",
+    engine=get_engine("omnivoice"),
+)
+```
+
+Only clone a voice you have the right to use.
 
 ## Development
 
